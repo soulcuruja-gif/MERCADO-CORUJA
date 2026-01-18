@@ -1,0 +1,7 @@
+{
+  "name": "Gestão Mercado Coruja POS",
+  "description": "Sistema PDV completo para minimercados com gestão de estoque, dashboards de vendas, controle de despesas e insights de IA para margem de lucro.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
