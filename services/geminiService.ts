@@ -30,7 +30,7 @@ export const getBusinessInsights = async (products: Product[], sales: Sale[], ex
   }
 };
 
-export const extractProductsFromInvoice = async (base64Image: string): Promise<ScannedProduct[]> => {
+export const extractProductsFromMedia = async (base64Data: string, mimeType: string): Promise<ScannedProduct[]> => {
   const prompt = `
     Extraia a lista de produtos desta Nota Fiscal (NF). 
     REGRAS CRÍTICAS DE CÁLCULO:
@@ -53,7 +53,7 @@ export const extractProductsFromInvoice = async (base64Image: string): Promise<S
       contents: {
         parts: [
           { text: prompt },
-          { inlineData: { mimeType: "image/jpeg", data: base64Image } }
+          { inlineData: { mimeType: mimeType, data: base64Data } }
         ]
       },
       config: {
@@ -82,9 +82,9 @@ export const extractProductsFromInvoice = async (base64Image: string): Promise<S
   }
 };
 
-export const extractExpenseFromInvoice = async (base64Image: string): Promise<ScannedExpense> => {
+export const extractExpenseFromMedia = async (base64Data: string, mimeType: string): Promise<ScannedExpense> => {
   const prompt = `
-    Analise esta imagem de conta (luz, água, aluguel, NF de fornecedor, etc).
+    Analise este arquivo de conta (luz, água, aluguel, NF de fornecedor, etc).
     Extraia os seguintes campos:
     - 'description': O que é a despesa (ex: Conta de Luz, Fornecedor X).
     - 'amount': Valor total a pagar.
@@ -100,7 +100,7 @@ export const extractExpenseFromInvoice = async (base64Image: string): Promise<Sc
       contents: {
         parts: [
           { text: prompt },
-          { inlineData: { mimeType: "image/jpeg", data: base64Image } }
+          { inlineData: { mimeType: mimeType, data: base64Data } }
         ]
       },
       config: {

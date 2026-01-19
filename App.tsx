@@ -45,7 +45,13 @@ import {
   PanelLeftOpen,
   Layers,
   Moon,
-  Sun
+  Sun,
+  LogOut,
+  KeyRound,
+  Fingerprint,
+  Eye,
+  EyeOff,
+  ExternalLink
 } from 'lucide-react';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
@@ -54,7 +60,14 @@ import {
 
 import { Product, Sale, Expense, View, Category, SaleItem, ScannedProduct, PaymentMethod, ExpenseType, Customer } from './types';
 import { INITIAL_PRODUCTS, INITIAL_EXPENSES, INITIAL_SALES, INITIAL_CUSTOMERS } from './constants';
-import { getBusinessInsights, extractProductsFromInvoice, identifyProductFromImage, extractExpenseFromInvoice } from './services/geminiService';
+import { getBusinessInsights, extractProductsFromMedia, identifyProductFromImage, extractExpenseFromMedia } from './services/geminiService';
+
+declare global {
+  interface Window {
+    gapi: any;
+    google: any;
+  }
+}
 
 // --- Sub-components (Helpers) ---
 
@@ -112,7 +125,9 @@ const STORAGE_KEYS = {
   SALES: 'coruja_sales',
   EXPENSES: 'coruja_expenses',
   CUSTOMERS: 'coruja_customers',
-  DARK_MODE: 'coruja_dark_mode'
+  DARK_MODE: 'coruja_dark_mode',
+  API_KEY: 'coruja_google_api_key',
+  CLIENT_ID: 'coruja_google_client_id',
 };
 
 // --- Main App Component ---
@@ -124,17 +139,6 @@ export default function App() {
   const [isDarkMode, setIsDarkMode] = useState(() => {
     return localStorage.getItem(STORAGE_KEYS.DARK_MODE) === 'true';
   });
-
-  // --- DARK MODE EFFECT ---
-  // Aplica a classe 'dark' no elemento raiz do documento
-  useEffect(() => {
-    if (isDarkMode) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-    localStorage.setItem(STORAGE_KEYS.DARK_MODE, String(isDarkMode));
-  }, [isDarkMode]);
   
   // --- Data States ---
   const [products, setProducts] = useState<Product[]>(() => {
@@ -156,6 +160,27 @@ export default function App() {
     const saved = localStorage.getItem(STORAGE_KEYS.CUSTOMERS);
     return saved ? JSON.parse(saved) : INITIAL_CUSTOMERS;
   });
+  
+  // --- Google Drive State ---
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem(STORAGE_KEYS.API_KEY) || '');
+  const [clientId, setClientId] = useState(() => localStorage.getItem(STORAGE_KEYS.CLIENT_ID) || '');
+  const [isDriveAuthenticated, setIsDriveAuthenticated] = useState(false);
+  const [isDriveLoading, setIsDriveLoading] = useState(false);
+  const [driveUser, setDriveUser] = useState<any>(null);
+  const [tokenClient, setTokenClient] = useState<any>(null);
+  const [googleScriptsLoaded, setGoogleScriptsLoaded] = useState(false);
+  const scriptsInitiated = useRef(false);
+  const [isCredentialsModalOpen, setIsCredentialsModalOpen] = useState(false);
+
+  // --- DARK MODE EFFECT ---
+  useEffect(() => {
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    localStorage.setItem(STORAGE_KEYS.DARK_MODE, String(isDarkMode));
+  }, [isDarkMode]);
 
   // --- Persistence Sync ---
   useEffect(() => { localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products)); }, [products]);
@@ -179,11 +204,14 @@ export default function App() {
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const expenseFileInputRef = useRef<HTMLInputElement>(null);
 
-  // Modals
+  // Modals & UI States
   const [isScanning, setIsScanning] = useState(false);
   const [scanLoading, setScanLoading] = useState(false);
   const [scannedResults, setScannedResults] = useState<ScannedProduct[]>([]);
+  const [isScanResultsModalOpen, setIsScanResultsModalOpen] = useState(false);
   const [isExpenseScanning, setIsExpenseScanning] = useState(false);
   const [expenseScanLoading, setExpenseScanLoading] = useState(false);
   const [isPOSScanning, setIsPOSScanning] = useState(false);
@@ -211,7 +239,7 @@ export default function App() {
   const [inventoryCategory, setInventoryCategory] = useState<string>("Todas");
 
   // --- Handlers ---
-  const handleExportBackup = () => {
+  const handleExportLocalBackup = () => {
     const data = { products, sales, expenses, customers, version: "2.3", exportDate: new Date().toISOString() };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -220,10 +248,10 @@ export default function App() {
     link.download = `backup_coruja_${new Date().toISOString().split('T')[0]}.json`;
     link.click();
     URL.revokeObjectURL(url);
-    alert("Backup gerado com sucesso!");
+    alert("Backup local gerado com sucesso!");
   };
 
-  const handleImportBackup = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImportLocalBackup = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file || !confirm("Importar backup? Todos os dados atuais serão substituídos.")) return;
     const reader = new FileReader();
@@ -245,8 +273,42 @@ export default function App() {
   const stopCamera = () => { if (videoRef.current?.srcObject) (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop()); videoRef.current!.srcObject = null; };
   const startCamera = async () => { try { const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }); if (videoRef.current) { videoRef.current.srcObject = s; videoRef.current.play(); } } catch (e) { alert("Câmera bloqueada."); } };
   
-  const addToCart = (product: Product) => { if (product.stock <= 0) return alert("Esgotado!"); setCart(prev => { const ex = prev.find(i => i.productId === product.id); if (ex) return prev.map(i => i.productId === product.id ? { ...i, quantity: i.quantity + 1 } : i); return [...prev, { productId: product.id, name: product.name, quantity: 1, price: product.salePrice, cost: product.costPrice }]; }); };
+  // --- Cart Management ---
+  const addToCart = (product: Product) => {
+    setCart(prevCart => {
+      const existingItem = prevCart.find(item => item.productId === product.id);
+      const currentQuantityInCart = existingItem ? existingItem.quantity : 0;
+      if (currentQuantityInCart >= product.stock) {
+        alert("Estoque máximo atingido!");
+        return prevCart;
+      }
+      if (existingItem) {
+        return prevCart.map(item => item.productId === product.id ? { ...item, quantity: item.quantity + 1 } : item);
+      } else {
+        return [...prevCart, { productId: product.id, name: product.name, quantity: 1, price: product.salePrice, cost: product.costPrice }];
+      }
+    });
+  };
+
+  const increaseCartItem = (productId: string) => {
+    const product = products.find(p => p.id === productId);
+    if (product) {
+      addToCart(product);
+    }
+  };
   
+  const decreaseCartItemQuantity = (productId: string) => {
+    setCart(prev => {
+      const existingItem = prev.find(item => item.productId === productId);
+      if (existingItem?.quantity === 1) {
+        return prev.filter(item => item.productId !== productId);
+      } else if (existingItem) {
+        return prev.map(item => item.productId === productId ? { ...item, quantity: item.quantity - 1 } : item);
+      }
+      return prev;
+    });
+  };
+
   const finalizeSale = () => { if (cart.length === 0) return; const total = cart.reduce((acc, i) => acc + (i.price * i.quantity), 0); if (selectedPayment === PaymentMethod.FIADO) { if (!selectedCustomerId) return alert("Selecione o cliente."); const c = customers.find(cu => cu.id === selectedCustomerId); if (c && c.currentDebt + total > c.creditLimit) return alert("Limite excedido!"); setCustomers(prev => prev.map(cu => cu.id === selectedCustomerId ? { ...cu, currentDebt: Number((cu.currentDebt + total).toFixed(2)) } : cu)); } const newSale = { id: `s${Date.now()}`, date: new Date().toISOString(), items: [...cart], total, totalCost: cart.reduce((acc, i) => acc + (i.cost * i.quantity), 0), profit: total - cart.reduce((acc, i) => acc + (i.cost * i.quantity), 0), paymentMethod: selectedPayment, customerId: selectedPayment === PaymentMethod.FIADO ? selectedCustomerId : undefined }; setProducts(prev => prev.map(p => { const si = cart.find(ci => ci.productId === p.id); return si ? { ...p, stock: p.stock - si.quantity } : p; })); setSales(prev => [newSale, ...prev]); setCart([]); setIsCheckoutModalOpen(false); };
   
   const handleDeleteSale = (id: string) => { if (!confirm("Estornar?")) return; const s = sales.find(sa => sa.id === id); if (s) { setProducts(prev => prev.map(p => { const it = s.items.find(si => si.productId === p.id); return it ? { ...p, stock: p.stock + it.quantity } : p; })); if (s.paymentMethod === PaymentMethod.FIADO && s.customerId) setCustomers(prev => prev.map(cu => cu.id === s.customerId ? { ...cu, currentDebt: Math.max(0, Number((cu.currentDebt - s.total).toFixed(2))) } : cu)); } setSales(prev => prev.filter(sa => sa.id !== id)); };
@@ -256,9 +318,121 @@ export default function App() {
   const handleAddOrUpdateExpense = () => { if (!newExpense.description || !newExpense.amount) return alert("Preencha tudo."); const exp = { id: editingExpenseId || `e${Date.now()}`, date: new Date().toISOString(), dueDate: newExpense.dueDate || new Date().toISOString().split('T')[0], description: newExpense.description, amount: newExpense.amount, type: newExpense.type, isPaid: false }; if (editingExpenseId) setExpenses(prev => prev.map(e => e.id === editingExpenseId ? exp : e)); else setExpenses(prev => [...prev, exp]); setNewExpense({ description: '', amount: 0, dueDate: '', type: ExpenseType.FIXA }); setEditingExpenseId(null); };
   const handleRegisterPayment = () => { if (!selectedCustomerForPayment || !paymentAmount) return; const amount = Number(paymentAmount); setCustomers(prev => prev.map(c => c.id === selectedCustomerForPayment.id ? { ...c, currentDebt: Math.max(0, Number((c.currentDebt - amount).toFixed(2))), totalPaid: Number((c.totalPaid + amount).toFixed(2)) } : c)); setIsPaymentModalOpen(false); setPaymentAmount(""); setSelectedCustomerForPayment(null); };
   const handleSaveProduct = () => { if (!newProduct.name || !newProduct.salePrice) return alert("Preencha nome e preço."); const p = { id: editingProduct?.id || `p${Date.now()}`, ...newProduct, lastUpdated: new Date().toISOString() }; if (editingProduct) setProducts(prev => prev.map(item => item.id === editingProduct.id ? p : item)); else setProducts(prev => [...prev, p]); setIsProductModalOpen(false); setNewProduct({ name: '', category: Category.ALIMENTOS, costPrice: 0, salePrice: 0, stock: 0, minStock: 5 }); setEditingProduct(null); };
-  const capturePhotoNF = async () => { if (canvasRef.current && videoRef.current) { setScanLoading(true); const ctx = canvasRef.current.getContext('2d'); canvasRef.current.width = videoRef.current.videoWidth; canvasRef.current.height = videoRef.current.videoHeight; ctx?.drawImage(videoRef.current, 0, 0); const base64 = canvasRef.current.toDataURL('image/jpeg').split(',')[1]; try { const results = await extractProductsFromInvoice(base64); setScannedResults(results); } catch (e) { alert("Erro ao ler NF."); } finally { setScanLoading(false); } } };
-  const captureExpensePhoto = async () => { if (canvasRef.current && videoRef.current) { setExpenseScanLoading(true); const ctx = canvasRef.current.getContext('2d'); canvasRef.current.width = videoRef.current.videoWidth; canvasRef.current.height = videoRef.current.videoHeight; ctx?.drawImage(videoRef.current, 0, 0); const base64 = canvasRef.current.toDataURL('image/jpeg').split(',')[1]; try { const result = await extractExpenseFromInvoice(base64); setNewExpense({ description: result.description, amount: result.amount, dueDate: result.dueDate, type: result.type }); stopCamera(); setIsExpenseScanning(false); } catch (e) { alert("Erro ao ler fatura."); } finally { setExpenseScanLoading(false); } } };
-  const confirmImport = () => { setProducts(prev => { const updated = [...prev]; scannedResults.forEach(sp => { const idx = updated.findIndex(p => p.name.toLowerCase() === sp.name.toLowerCase()); if (idx >= 0) updated[idx] = { ...updated[idx], stock: updated[idx].stock + sp.quantity, costPrice: sp.costPrice, lastUpdated: new Date().toISOString() }; else updated.push({ id: `p${Date.now()}-${Math.random().toString(36).substr(2, 5)}`, name: sp.name, category: sp.category || Category.OUTROS, costPrice: sp.costPrice, salePrice: Number((sp.costPrice * (1 + (defaultMargin / 100))).toFixed(2)), stock: sp.quantity, minStock: 5, lastUpdated: new Date().toISOString() }); }); return updated; }); setIsScanning(false); setScannedResults([]); stopCamera(); };
+  
+  const handleFileImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setScanLoading(true);
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+        try {
+            const dataUrl = e.target?.result as string;
+            const [header, base64Data] = dataUrl.split(',');
+            const mimeType = header.match(/:(.*?);/)?.[1] || file.type;
+            
+            const results = await extractProductsFromMedia(base64Data, mimeType);
+            if(results.length > 0) {
+                setScannedResults(results);
+                setIsScanResultsModalOpen(true);
+            } else {
+                alert("Nenhum produto encontrado no arquivo.");
+            }
+        } catch (err) {
+            alert("Erro ao processar o arquivo da NF.");
+            console.error(err);
+        } finally {
+            setScanLoading(false);
+            if (fileInputRef.current) fileInputRef.current.value = ""; // Reset file input
+        }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleExpenseFileImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setExpenseScanLoading(true);
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+        try {
+            const dataUrl = e.target?.result as string;
+            const [header, base64Data] = dataUrl.split(',');
+            const mimeType = header.match(/:(.*?);/)?.[1] || file.type;
+
+            const result = await extractExpenseFromMedia(base64Data, mimeType);
+            setNewExpense({ description: result.description, amount: result.amount, dueDate: result.dueDate, type: result.type });
+        } catch (err) {
+            alert("Erro ao processar o arquivo da fatura.");
+            console.error(err);
+        } finally {
+            setExpenseScanLoading(false);
+            if (expenseFileInputRef.current) expenseFileInputRef.current.value = "";
+        }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const capturePhotoNF = async () => { 
+    if (canvasRef.current && videoRef.current) { 
+      setScanLoading(true); 
+      const ctx = canvasRef.current.getContext('2d'); 
+      canvasRef.current.width = videoRef.current.videoWidth; 
+      canvasRef.current.height = videoRef.current.videoHeight; 
+      ctx?.drawImage(videoRef.current, 0, 0); 
+      const base64 = canvasRef.current.toDataURL('image/jpeg').split(',')[1]; 
+      try { 
+        const results = await extractProductsFromMedia(base64, 'image/jpeg'); 
+        setScannedResults(results); 
+        setIsScanResultsModalOpen(true);
+      } catch (e) { 
+        alert("Erro ao ler NF."); 
+      } finally { 
+        setScanLoading(false); 
+        stopCamera();
+        setIsScanning(false);
+      } 
+    } 
+  };
+  
+  const captureExpensePhoto = async () => { 
+    if (canvasRef.current && videoRef.current) { 
+      setExpenseScanLoading(true); 
+      const ctx = canvasRef.current.getContext('2d'); 
+      canvasRef.current.width = videoRef.current.videoWidth; 
+      canvasRef.current.height = videoRef.current.videoHeight; 
+      ctx?.drawImage(videoRef.current, 0, 0); 
+      const base64 = canvasRef.current.toDataURL('image/jpeg').split(',')[1]; 
+      try { 
+        const result = await extractExpenseFromMedia(base64, 'image/jpeg'); 
+        setNewExpense({ description: result.description, amount: result.amount, dueDate: result.dueDate, type: result.type }); 
+        stopCamera(); 
+        setIsExpenseScanning(false); 
+      } catch (e) { 
+        alert("Erro ao ler fatura."); 
+      } finally { 
+        setExpenseScanLoading(false); 
+      } 
+    } 
+  };
+  
+  const confirmImport = () => { 
+    setProducts(prev => { 
+      const updated = [...prev]; 
+      scannedResults.forEach(sp => { 
+        const idx = updated.findIndex(p => p.name.toLowerCase() === sp.name.toLowerCase()); 
+        if (idx >= 0) {
+          updated[idx] = { ...updated[idx], stock: updated[idx].stock + sp.quantity, costPrice: sp.costPrice, lastUpdated: new Date().toISOString() }; 
+        } else {
+          updated.push({ id: `p${Date.now()}-${Math.random().toString(36).substr(2, 5)}`, name: sp.name, category: sp.category || Category.OUTROS, costPrice: sp.costPrice, salePrice: Number((sp.costPrice * (1 + (defaultMargin / 100))).toFixed(2)), stock: sp.quantity, minStock: 5, lastUpdated: new Date().toISOString() }); 
+        }
+      }); 
+      return updated; 
+    }); 
+    setIsScanResultsModalOpen(false);
+    setScannedResults([]); 
+  };
   const handleAddCustomer = () => { if (!newCustomer.name) return alert("Nome obrigatório."); const c = { id: `c${Date.now()}`, ...newCustomer, currentDebt: 0, totalPaid: 0 }; setCustomers(prev => [...prev, c]); setIsCustomerModalOpen(false); setNewCustomer({ name: '', phone: '', creditLimit: 0 }); };
 
   // Statistics Calculation
@@ -296,12 +470,216 @@ export default function App() {
   // AI Insights call
   const fetchAIInsights = useCallback(async () => {
     setIsLoadingAI(true);
-    const insights = await getBusinessInsights(products, filteredSales, expenses);
-    setAiInsights(insights || "Nenhum insight disponível.");
-    setIsLoadingAI(false);
+    setAiInsights("");
+    try {
+      const insights = await getBusinessInsights(products, filteredSales, expenses);
+      setAiInsights(insights || "Nenhum insight disponível.");
+    } catch (error) {
+      console.error(error);
+      setAiInsights("Ocorreu um erro ao buscar insights. Verifique sua cota de API.");
+    } finally {
+      setIsLoadingAI(false);
+    }
   }, [products, filteredSales, expenses]);
 
-  useEffect(() => { if (activeView === 'dashboard' || activeView === 'reports') fetchAIInsights(); }, [activeView, fetchAIInsights]);
+  useEffect(() => {
+    fetchAIInsights();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // --- Google Drive Integration ---
+  const initializeGoogleClients = useCallback((currentApiKey: string, currentClientId: string) => {
+    if (scriptsInitiated.current) return;
+    scriptsInitiated.current = true;
+  
+    const gapiScript = document.createElement('script');
+    gapiScript.src = "https://apis.google.com/js/api.js";
+    gapiScript.async = true;
+    gapiScript.defer = true;
+  
+    const gisScript = document.createElement('script');
+    gisScript.src = "https://accounts.google.com/gsi/client";
+    gisScript.async = true;
+    gisScript.defer = true;
+  
+    const handleGisLoad = () => {
+      try {
+        const client = window.google.accounts.oauth2.initTokenClient({
+          client_id: currentClientId,
+          scope: 'https://www.googleapis.com/auth/drive.file',
+          callback: (tokenResponse: any) => {
+            if (tokenResponse && tokenResponse.access_token) {
+              window.gapi.client.setToken(tokenResponse);
+              setIsDriveAuthenticated(true);
+              fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                headers: { 'Authorization': `Bearer ${tokenResponse.access_token}` }
+              })
+              .then(res => res.json())
+              .then(data => {
+                setDriveUser({
+                  getName: () => data.name,
+                  getEmail: () => data.email,
+                  getImageUrl: () => data.picture,
+                });
+              }).catch(err => console.error("Error fetching user info:", err));
+            }
+          },
+        });
+        setTokenClient(client);
+        setGoogleScriptsLoaded(true);
+      } catch (error) {
+        console.error("Error initializing GIS client:", error);
+        alert("Falha ao inicializar o serviço de autenticação do Google. Verifique se o ID do Cliente é válido.");
+      }
+    };
+  
+    const handleGapiLoad = () => {
+      window.gapi.load('client:picker', async () => {
+        try {
+          await window.gapi.client.init({
+            apiKey: currentApiKey,
+            discoveryDocs: ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"],
+          });
+          gisScript.onload = handleGisLoad;
+          document.body.appendChild(gisScript);
+        } catch (err: any) {
+          console.error("Error initializing GAPI client:", err);
+          alert(`Falha ao carregar a API do Google Drive: ${err.details || err.message || 'Erro desconhecido'}. Verifique se a 'Drive API' está ativada no seu projeto Google Cloud e se a Chave de API é válida.`);
+        }
+      });
+    };
+  
+    gapiScript.onload = handleGapiLoad;
+    document.body.appendChild(gapiScript);
+  }, []);
+
+  useEffect(() => {
+    if (apiKey && clientId && !googleScriptsLoaded) {
+      initializeGoogleClients(apiKey, clientId);
+    }
+  }, [apiKey, clientId, googleScriptsLoaded, initializeGoogleClients]);
+
+  const handleSaveCredentials = (newApiKey: string, newClientId: string) => {
+    localStorage.setItem(STORAGE_KEYS.API_KEY, newApiKey);
+    localStorage.setItem(STORAGE_KEYS.CLIENT_ID, newClientId);
+    setApiKey(newApiKey);
+    setClientId(newClientId);
+    setIsCredentialsModalOpen(false);
+    // Reset script loading flag to allow re-initialization with new keys
+    scriptsInitiated.current = false; 
+    setGoogleScriptsLoaded(false);
+    // The useEffect will now pick up the new keys and initialize
+  };
+
+  const handleDriveAuth = () => {
+    if (tokenClient) {
+      tokenClient.requestAccessToken({ prompt: 'consent' });
+    } else if (!googleScriptsLoaded) {
+      alert("A integração com o Google Drive ainda está carregando ou não foi configurada. Por favor, configure suas credenciais na aba 'Ajustes'.");
+    } else {
+       alert("A configuração do Google Drive está incompleta. Verifique se o ID do Cliente foi fornecido corretamente.");
+    }
+  };
+  
+  const handleDriveSignOut = () => {
+    const token = window.gapi.client.getToken();
+    if (token && token.access_token) {
+      window.google.accounts.oauth2.revoke(token.access_token, () => {
+        window.gapi.client.setToken(null);
+        setIsDriveAuthenticated(false);
+        setDriveUser(null);
+      });
+    }
+  };
+
+  const handleExportToDrive = async () => {
+    if (!isDriveAuthenticated) return alert("Por favor, conecte-se ao Google Drive primeiro.");
+    setIsDriveLoading(true);
+    const dataToBackup = { products, sales, expenses, customers, version: "2.4-drive", exportDate: new Date().toISOString() };
+    const fileContent = JSON.stringify(dataToBackup, null, 2);
+    const fileName = `backup_coruja_${new Date().toISOString().split('T')[0]}.json`;
+    const boundary = '-------314159265358979323846';
+    const delimiter = `\r\n--${boundary}\r\n`;
+    const close_delim = `\r\n--${boundary}--`;
+    const metadata = { name: fileName, mimeType: 'application/json' };
+    const multipartRequestBody =
+      delimiter + 'Content-Type: application/json\r\n\r\n' + JSON.stringify(metadata) +
+      delimiter + 'Content-Type: application/json\r\n\r\n' + fileContent + close_delim;
+
+    try {
+      await window.gapi.client.request({
+        path: '/upload/drive/v3/files', method: 'POST', params: { uploadType: 'multipart' },
+        headers: { 'Content-Type': `multipart/related; boundary="${boundary}"` }, body: multipartRequestBody,
+      });
+      alert("Backup salvo no Google Drive com sucesso!");
+    } catch (error) {
+      console.error("Error uploading to Drive:", error);
+      alert("Erro ao salvar o backup no Google Drive.");
+    } finally {
+      setIsDriveLoading(false);
+    }
+  };
+
+  const pickerCallback = useCallback(async (data: any) => {
+    if (data.action === window.google.picker.Action.PICKED) {
+      const fileId = data.docs[0].id;
+      setIsDriveLoading(true);
+      try {
+        if (!confirm("Importar backup do Drive? Todos os dados atuais serão substituídos.")) {
+          setIsDriveLoading(false);
+          return;
+        }
+        const response = await window.gapi.client.drive.files.get({ fileId, alt: 'media' });
+        const fileData = JSON.parse(response.body);
+        
+        if (fileData.products && fileData.sales) {
+          setProducts(fileData.products);
+          setSales(fileData.sales);
+          setExpenses(fileData.expenses || []);
+          setCustomers(fileData.customers || []);
+          alert("Backup restaurado do Google Drive com sucesso!");
+        } else {
+          throw new Error("Formato de backup inválido.");
+        }
+      } catch (error) {
+        console.error("Error downloading from Drive:", error);
+        alert("Erro ao carregar o backup do Google Drive.");
+      } finally {
+        setIsDriveLoading(false);
+      }
+    }
+  }, [setProducts, setSales, setExpenses, setCustomers]);
+
+  const handleImportFromDrive = () => {
+    if (!isDriveAuthenticated) {
+      alert("Por favor, conecte-se ao Google Drive primeiro.");
+      handleDriveAuth();
+      return;
+    }
+    
+    const token = window.gapi.client.getToken();
+    if (!token || !token.access_token) {
+        alert("Sessão expirada. Por favor, conecte-se novamente.");
+        handleDriveAuth();
+        return;
+    }
+
+    if (!window.google || !window.google.picker) {
+        alert("O seletor de arquivos do Google não pôde ser carregado. Tente recarregar a página.");
+        return;
+    }
+
+    const view = new window.google.picker.View(window.google.picker.ViewId.DOCS);
+    view.setMimeTypes("application/json");
+
+    const picker = new window.google.picker.PickerBuilder()
+      .addView(view)
+      .setOAuthToken(token.access_token)
+      .setDeveloperKey(apiKey)
+      .setCallback(pickerCallback)
+      .build();
+    picker.setVisible(true);
+  };
 
   return (
     <div className="flex min-h-screen bg-slate-50 dark:bg-slate-950 transition-all duration-500 overflow-x-hidden text-slate-900 dark:text-slate-100">
@@ -314,8 +692,8 @@ export default function App() {
       >
         <div className={`p-6 flex items-center transition-all ${isSidebarCollapsed ? 'justify-center px-0' : 'justify-between'}`}>
           <div className="flex items-center space-x-2">
-            <div className="bg-indigo-600 p-2 rounded-xl text-white shadow-lg shadow-indigo-100 dark:shadow-indigo-900/20 shrink-0">
-              <ShoppingCart size={20} />
+            <div className="bg-indigo-600 p-1.5 rounded-xl text-white shadow-lg shadow-indigo-100 dark:shadow-indigo-900/20 shrink-0 flex items-center justify-center">
+              <img src="https://cdn-icons-png.flaticon.com/512/952/952763.png" alt="Coruja Logo" className="w-6 h-6" />
             </div>
             {!isSidebarCollapsed && (
               <h1 className="text-xl font-black text-slate-800 dark:text-slate-100 tracking-tight whitespace-nowrap overflow-hidden animate-in fade-in">
@@ -387,7 +765,7 @@ export default function App() {
               <span className="text-sm font-black text-rose-600 dark:text-rose-500">R$ {totalOutstandingDebt.toFixed(2)}</span>
             </div>
             <div className="w-10 h-10 bg-slate-100 dark:bg-slate-800 rounded-full border-2 border-white dark:border-slate-700 shadow-sm overflow-hidden flex items-center justify-center">
-               <img src="https://cdn-icons-png.flaticon.com/512/3594/3594363.png" alt="Logo" className="w-6 h-6 object-contain opacity-80" />
+               <img src="https://cdn-icons-png.flaticon.com/512/952/952763.png" alt="Logo" className="w-6 h-6 object-contain" />
             </div>
           </div>
         </header>
@@ -434,11 +812,18 @@ export default function App() {
                 <div className="bg-indigo-900 dark:bg-indigo-950 p-8 rounded-[40px] text-white shadow-2xl flex flex-col justify-between relative overflow-hidden group">
                    <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:scale-110 transition-transform"><Bell size={120}/></div>
                    <div className="relative z-10">
-                     <div className="flex items-center space-x-3 mb-6">
-                        <div className="bg-indigo-600/50 p-2 rounded-xl"><Bell size={20} className="text-indigo-200" /></div>
-                        <h3 className="font-black text-xl tracking-tight">IA Coruja Insight</h3>
-                     </div>
-                     <p className="italic text-indigo-100 dark:text-indigo-200/80 text-sm leading-relaxed whitespace-pre-wrap">{aiInsights || "Analisando padrões..."}</p>
+                      <div className="flex items-center justify-between mb-6">
+                         <div className="flex items-center space-x-3">
+                            <div className="bg-indigo-600/50 p-2 rounded-xl"><Bell size={20} className="text-indigo-200" /></div>
+                            <h3 className="font-black text-xl tracking-tight">IA Coruja Insight</h3>
+                         </div>
+                         <button onClick={fetchAIInsights} disabled={isLoadingAI} className="p-2 bg-white/10 rounded-full hover:bg-white/20 disabled:opacity-50 transition-all">
+                            <RefreshCw size={16} className={isLoadingAI ? "animate-spin" : ""} />
+                         </button>
+                      </div>
+                      <p className="italic text-indigo-100 dark:text-indigo-200/80 text-sm leading-relaxed whitespace-pre-wrap min-h-[60px]">
+                        {isLoadingAI ? "Analisando padrões..." : (aiInsights || "Clique em atualizar para obter novos insights.")}
+                      </p>
                    </div>
                    <button onClick={() => setActiveView('reports')} className="relative z-10 mt-8 flex items-center justify-between bg-white/10 hover:bg-white/20 transition-all p-4 rounded-2xl text-xs font-black uppercase text-indigo-300 group/btn">
                      <span>Relatório Completo</span>
@@ -473,7 +858,7 @@ export default function App() {
                         {pendingProduct && (
                             <div className="absolute inset-x-4 bottom-4 bg-white dark:bg-slate-800 p-6 rounded-[32px] shadow-2xl animate-in slide-in-from-bottom-8">
                               <div className="flex justify-between items-center mb-6"><div><p className="text-[10px] font-black text-indigo-400 dark:text-indigo-300 uppercase tracking-widest">Detectado</p><h3 className="text-xl font-black text-slate-800 dark:text-slate-100">{pendingProduct.name}</h3></div><span className="text-2xl font-black text-indigo-600 dark:text-indigo-400">R$ {pendingProduct.salePrice.toFixed(2)}</span></div>
-                              <div className="flex gap-4"><button onClick={() => setPendingProduct(null)} className="flex-1 py-4 bg-slate-100 dark:bg-slate-700 rounded-2xl font-black text-slate-400 dark:text-slate-300">FECHAR</button><button onClick={() => { addToCart(pendingProduct); setPendingProduct(null); }} className="flex-2 bg-emerald-600 text-white py-4 rounded-2xl font-black shadow-lg">ADICUEIR</button></div>
+                              <div className="flex gap-4"><button onClick={() => setPendingProduct(null)} className="flex-1 py-4 bg-slate-100 dark:bg-slate-700 rounded-2xl font-black text-slate-400 dark:text-slate-300">FECHAR</button><button onClick={() => { addToCart(pendingProduct); setPendingProduct(null); }} className="flex-2 bg-emerald-600 text-white py-4 rounded-2xl font-black shadow-lg">ADICIONAR</button></div>
                             </div>
                         )}
                         <button onClick={() => { stopCamera(); setIsPOSScanning(false); }} className="absolute top-6 right-6 p-2 bg-black/20 backdrop-blur-md rounded-full text-white hover:bg-black/40 transition-all"><X size={20}/></button>
@@ -504,14 +889,16 @@ export default function App() {
                         cart.map(item => (
                           <div key={item.productId} className="flex justify-between items-center p-4 bg-slate-50/50 dark:bg-slate-800/40 rounded-2xl border border-slate-100 dark:border-slate-800 animate-in slide-in-from-right-2">
                             <div className="flex-1 pr-4">
-                               <p className="font-black text-slate-800 dark:text-slate-200 text-sm leading-tight line-clamp-2">{item.name}</p>
-                               <div className="flex items-center space-x-2 mt-1">
-                                  <span className="text-[10px] font-bold text-indigo-400 dark:text-indigo-500">{item.quantity}x R$ {item.price.toFixed(2)}</span>
-                               </div>
+                                <p className="font-black text-slate-800 dark:text-slate-200 text-sm leading-tight line-clamp-2">{item.name}</p>
+                                <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500">R$ {item.price.toFixed(2)} / un.</p>
                             </div>
-                            <div className="text-right flex flex-col items-end">
-                               <span className="font-black text-slate-800 dark:text-slate-200 text-sm">R$ {(item.quantity * item.price).toFixed(2)}</span>
-                               <button onClick={() => setCart(prev => prev.filter(i => i.productId !== item.productId))} className="mt-2 p-1 text-slate-300 dark:text-slate-600 hover:text-rose-50 hover:bg-rose-50 rounded-lg transition-all"><Trash2 size={14}/></button>
+                            <div className="flex items-center gap-3 bg-slate-100 dark:bg-slate-800 p-1 rounded-full">
+                                <button onClick={() => decreaseCartItemQuantity(item.productId)} className="w-8 h-8 flex items-center justify-center bg-white dark:bg-slate-700/50 rounded-full font-black text-xl text-slate-500 dark:text-slate-300 active:scale-90 transition-transform">-</button>
+                                <span className="font-black text-base w-8 text-center tabular-nums">{item.quantity}</span>
+                                <button onClick={() => increaseCartItem(item.productId)} className="w-8 h-8 flex items-center justify-center bg-white dark:bg-slate-700/50 rounded-full font-black text-xl text-slate-500 dark:text-slate-300 active:scale-90 transition-transform">+</button>
+                            </div>
+                            <div className="text-right w-24 ml-4">
+                                <span className="font-black text-slate-800 dark:text-slate-200 text-lg tabular-nums">R$ {(item.quantity * item.price).toFixed(2)}</span>
                             </div>
                           </div>
                         ))
@@ -531,49 +918,83 @@ export default function App() {
 
           {/* SETTINGS */}
           {activeView === 'settings' && (
-             <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in duration-500">
-                <div className="bg-white dark:bg-slate-900 p-10 rounded-[48px] border border-slate-100 dark:border-slate-800 shadow-xl overflow-hidden relative group">
-                   <div className="absolute top-0 right-0 p-10 opacity-5 group-hover:scale-110 transition-transform"><Cloud size={160} className="dark:text-slate-400" /></div>
-                   <div className="relative z-10">
-                      <h3 className="text-3xl font-black text-slate-800 dark:text-slate-100 flex items-center gap-4">
-                         <Cloud className="text-indigo-600 dark:text-indigo-400" size={36}/>
-                         Backups & Drive
-                      </h3>
-                      <p className="text-slate-400 dark:text-slate-500 mt-4 text-base leading-relaxed max-w-xl font-medium">Mantenha seu mercado sincronizado. Exporte para o Google Drive e recupere em qualquer aparelho.</p>
-                      
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mt-12">
-                         <div className="bg-slate-50 dark:bg-slate-800/50 p-8 rounded-[32px] border border-slate-100 dark:border-slate-800 flex flex-col justify-between group/card hover:border-indigo-200 dark:hover:border-indigo-900/40 transition-all hover:shadow-lg">
-                            <div>
-                               <div className="w-14 h-14 bg-white dark:bg-slate-800 rounded-2xl flex items-center justify-center text-indigo-600 dark:text-indigo-400 shadow-sm mb-6"><Download size={28}/></div>
-                               <h4 className="font-black text-slate-800 dark:text-slate-100 text-xl">Criar Backup</h4>
-                               <p className="text-[11px] text-slate-400 dark:text-slate-500 font-bold uppercase mt-2 tracking-widest leading-relaxed">Arquivo .JSON local</p>
+            <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in duration-500">
+              <div className="bg-white dark:bg-slate-900 p-10 rounded-[48px] border border-slate-100 dark:border-slate-800 shadow-xl overflow-hidden relative group">
+                 <div className="absolute top-0 right-0 p-10 opacity-5 group-hover:scale-110 transition-transform"><Cloud size={160} className="dark:text-slate-400" /></div>
+                 <div className="relative z-10">
+                    <h3 className="text-3xl font-black text-slate-800 dark:text-slate-100 flex items-center gap-4">
+                       <Cloud className="text-indigo-600 dark:text-indigo-400" size={36}/>
+                       Backups & Sincronização
+                    </h3>
+                    <p className="text-slate-400 dark:text-slate-500 mt-4 text-base leading-relaxed max-w-xl font-medium">Mantenha seus dados seguros na nuvem e acesse de qualquer lugar.</p>
+                    
+                    <div className="mt-10 bg-slate-50 dark:bg-slate-800/50 p-8 rounded-[32px] border border-slate-100 dark:border-slate-800">
+                      {!(apiKey && clientId) ? (
+                        <div className="flex flex-col items-center text-center">
+                          <img src="https://upload.wikimedia.org/wikipedia/commons/d/da/Google_Drive_logo.png" alt="Google Drive" className="w-16 h-16 mb-4"/>
+                          <h4 className="font-black text-slate-800 dark:text-slate-100 text-xl mb-2">Conecte seu Google Drive</h4>
+                          <p className="text-sm text-slate-400 dark:text-slate-500 mb-6 max-w-sm">Para começar, configure suas credenciais da API do Google. Você só precisa fazer isso uma vez.</p>
+                          <button onClick={() => setIsCredentialsModalOpen(true)} className="bg-indigo-600 text-white font-black py-5 px-10 rounded-2xl shadow-lg hover:bg-indigo-700 transition-all active:scale-95 flex items-center gap-3">
+                            <Settings size={20}/> CONFIGURAR CREDENCIAIS
+                          </button>
+                        </div>
+                      ) : !isDriveAuthenticated ? (
+                        <div className="flex flex-col items-center text-center">
+                           <img src="https://upload.wikimedia.org/wikipedia/commons/d/da/Google_Drive_logo.png" alt="Google Drive" className="w-16 h-16 mb-4"/>
+                           <h4 className="font-black text-slate-800 dark:text-slate-100 text-xl mb-2">Conectar ao Google Drive</h4>
+                           <p className="text-sm text-slate-400 dark:text-slate-500 mb-6 max-w-sm">Suas credenciais estão salvas. Autorize o acesso para começar a usar o backup na nuvem.</p>
+                           <div className="flex flex-col items-center gap-4">
+                            <button onClick={handleDriveAuth} className="bg-white text-slate-700 font-black py-5 px-10 rounded-2xl shadow-lg hover:bg-slate-200 transition-all active:scale-95 flex items-center gap-3">
+                              CONECTAR AO GOOGLE
+                            </button>
+                            <button onClick={() => setIsCredentialsModalOpen(true)} className="text-xs text-slate-400 hover:text-indigo-500 transition-colors">Editar credenciais</button>
+                           </div>
+                        </div>
+                      ) : (
+                        <div>
+                          <div className="flex flex-col sm:flex-row justify-between items-center mb-6 bg-emerald-50/50 dark:bg-emerald-900/10 p-4 rounded-2xl border border-emerald-100 dark:border-emerald-900/20">
+                            <div className="flex items-center gap-3">
+                              <img src={driveUser?.getImageUrl()} alt="User" className="w-10 h-10 rounded-full"/>
+                              <div>
+                                <p className="font-bold text-sm text-slate-800 dark:text-slate-200">{driveUser?.getName()}</p>
+                                <p className="text-xs text-slate-400 dark:text-slate-500">{driveUser?.getEmail()}</p>
+                              </div>
                             </div>
-                            <button onClick={handleExportBackup} className="mt-8 w-full bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-black py-5 rounded-2xl hover:bg-indigo-600 dark:hover:bg-indigo-500 hover:text-white transition-all shadow-sm">EXPORTAR</button>
-                         </div>
-                         
-                         <div className="bg-indigo-50/30 dark:bg-indigo-900/10 p-8 rounded-[32px] border border-indigo-100 dark:border-indigo-900/40 flex flex-col justify-between group/card hover:border-indigo-400 transition-all hover:shadow-lg">
-                            <div>
-                               <div className="w-14 h-14 bg-indigo-600 dark:bg-indigo-500 rounded-2xl flex items-center justify-center text-white shadow-lg mb-6"><Upload size={28}/></div>
-                               <h4 className="font-black text-indigo-900 dark:text-indigo-100 text-xl">Restaurar</h4>
-                               <p className="text-[11px] text-indigo-400 dark:text-indigo-500 font-bold uppercase mt-2 tracking-widest leading-relaxed">Importar do dispositivo</p>
-                            </div>
-                            <label className="mt-8 cursor-pointer">
-                               <input type="file" className="hidden" accept=".json" onChange={handleImportBackup} />
-                               <div className="w-full bg-indigo-600 dark:bg-indigo-500 text-white font-black py-5 rounded-2xl text-center shadow-lg hover:bg-indigo-700 dark:hover:bg-indigo-600 transition-all active:scale-[0.98]">ABRIR ARQUIVO</div>
-                            </label>
-                         </div>
-                      </div>
-                   </div>
-                </div>
+                            <button onClick={handleDriveSignOut} className="mt-3 sm:mt-0 flex items-center gap-2 text-xs font-bold text-rose-500 dark:text-rose-400 bg-rose-50 dark:bg-rose-900/20 px-4 py-2 rounded-lg hover:bg-rose-100 dark:hover:bg-rose-900/40 transition-colors">
+                              <LogOut size={14} /> DESCONECTAR
+                            </button>
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <button onClick={handleExportToDrive} disabled={isDriveLoading} className="bg-indigo-600 dark:bg-indigo-500 text-white font-black py-6 rounded-2xl shadow-lg hover:bg-indigo-700 transition-all active:scale-95 flex items-center justify-center gap-3 disabled:opacity-50">
+                              {isDriveLoading ? <RefreshCw size={24} className="animate-spin"/> : <Upload size={24}/>}
+                              SALVAR NO DRIVE
+                            </button>
+                            <button onClick={handleImportFromDrive} disabled={isDriveLoading} className="bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-black py-6 rounded-2xl hover:bg-slate-50/50 transition-all shadow-sm flex items-center justify-center gap-3 disabled:opacity-50">
+                              {isDriveLoading ? <RefreshCw size={24} className="animate-spin"/> : <Download size={24}/>}
+                              CARREGAR DO DRIVE
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
 
-                <div className="bg-slate-900 dark:bg-slate-950 p-10 rounded-[48px] text-white shadow-2xl flex flex-col lg:flex-row items-center gap-10 border border-slate-800">
-                   <div className="bg-indigo-600 p-8 rounded-[36px] text-white shadow-2xl animate-pulse"><Smartphone size={48}/></div>
-                   <div className="flex-1 space-y-4">
-                      <h4 className="font-black text-2xl tracking-tight">Dica de Segurança</h4>
-                      <p className="text-slate-400 text-base leading-relaxed font-medium">Salve seu backup periodicamente no Google Drive. Se o aparelho for trocado, basta importar o arquivo aqui e seus fiados estarão salvos!</p>
-                   </div>
-                </div>
-             </div>
+                    <div className="mt-12 pt-8 border-t border-slate-100 dark:border-slate-800">
+                      <h4 className="text-center font-black text-slate-400 dark:text-slate-600 uppercase tracking-widest text-xs mb-6">Backup Local</h4>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <button onClick={handleExportLocalBackup} className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-bold py-5 rounded-2xl text-sm flex items-center justify-center gap-3 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
+                          <Download size={18}/> Exportar para Dispositivo
+                        </button>
+                        <label className="cursor-pointer">
+                          <input type="file" className="hidden" accept=".json" onChange={handleImportLocalBackup} />
+                          <div className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-bold py-5 rounded-2xl text-sm flex items-center justify-center gap-3 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
+                            <Upload size={18}/> Importar do Dispositivo
+                          </div>
+                        </label>
+                      </div>
+                    </div>
+                 </div>
+              </div>
+            </div>
           )}
 
           {/* INVENTORY */}
@@ -605,8 +1026,10 @@ export default function App() {
                       </div>
                    </div>
                    <div className="flex gap-3">
-                      <button onClick={() => { setEditingProduct(null); setIsProductModalOpen(true); }} className="flex-1 lg:flex-none bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 px-8 py-4 rounded-[20px] font-black text-slate-600 dark:text-slate-400 flex items-center justify-center gap-3 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all shadow-sm"><Plus size={20}/> NOVO</button>
-                      <button onClick={() => { setIsScanning(true); startCamera(); }} className="flex-1 lg:flex-none bg-indigo-600 text-white px-8 py-4 rounded-[20px] font-black flex items-center justify-center gap-3 shadow-lg dark:shadow-none hover:bg-indigo-700 active:scale-95 transition-all"><Camera size={20}/> LER NF</button>
+                      <input type="file" ref={fileInputRef} onChange={handleFileImport} accept=".pdf,.xml,.jpeg,.jpg,.png" style={{ display: 'none' }} />
+                      <button onClick={() => { setEditingProduct(null); setNewProduct({ name: '', category: Category.ALIMENTOS, costPrice: 0, salePrice: 0, stock: 0, minStock: 5 }); setIsProductModalOpen(true); }} className="flex-1 lg:flex-none bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 px-6 py-4 rounded-[20px] font-black text-slate-600 dark:text-slate-400 flex items-center justify-center gap-3 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all shadow-sm"><Plus size={20}/> NOVO</button>
+                      <button onClick={() => fileInputRef.current?.click()} className="flex-1 lg:flex-none bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 px-6 py-4 rounded-[20px] font-black text-slate-600 dark:text-slate-400 flex items-center justify-center gap-3 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all shadow-sm"><Upload size={20}/> IMPORTAR NF</button>
+                      <button onClick={() => { setIsScanning(true); startCamera(); }} className="flex-1 lg:flex-none bg-indigo-600 text-white px-6 py-4 rounded-[20px] font-black flex items-center justify-center gap-3 shadow-lg dark:shadow-none hover:bg-indigo-700 active:scale-95 transition-all"><Camera size={20}/> LER NF</button>
                    </div>
                 </div>
                 <div className="bg-white dark:bg-slate-900 rounded-[40px] border border-slate-100 dark:border-slate-800 shadow-sm overflow-hidden">
@@ -750,7 +1173,11 @@ export default function App() {
                   <div className="xl:col-span-1 bg-white dark:bg-slate-900 p-8 rounded-[40px] border border-slate-100 dark:border-slate-800 shadow-sm space-y-6 sticky top-24 h-fit transition-colors">
                      <div className="flex items-center justify-between">
                         <h3 className="font-black text-slate-800 dark:text-slate-100 text-xl tracking-tight">Nova Despesa</h3>
-                        <button onClick={() => { setIsExpenseScanning(true); startCamera(); }} className="p-3 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 rounded-2xl hover:scale-110 transition-transform"><Camera size={24}/></button>
+                        <div className="flex items-center gap-2">
+                          <input type="file" ref={expenseFileInputRef} onChange={handleExpenseFileImport} accept=".pdf,.xml,.jpeg,.jpg,.png" style={{ display: 'none' }} />
+                          <button onClick={() => expenseFileInputRef.current?.click()} className="p-3 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 rounded-2xl hover:scale-110 transition-transform"><Upload size={24}/></button>
+                          <button onClick={() => { setIsExpenseScanning(true); startCamera(); }} className="p-3 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 rounded-2xl hover:scale-110 transition-transform"><Camera size={24}/></button>
+                        </div>
                      </div>
                      <div className="space-y-5">
                        <div className="space-y-1">
@@ -845,19 +1272,24 @@ export default function App() {
                   
                   <div className="bg-white dark:bg-slate-900 p-10 rounded-[48px] border border-slate-100 dark:border-slate-800 shadow-sm relative group overflow-hidden transition-colors">
                      <div className="absolute top-0 left-0 w-2 h-full bg-indigo-600"></div>
-                     <h3 className="font-black text-slate-800 dark:text-slate-100 text-2xl tracking-tight flex items-center mb-8">
-                        <TrendingUp size={28} className="mr-4 text-indigo-600 dark:text-indigo-400"/> 
-                        Análise Gemini Business
-                     </h3>
+                      <div className='flex justify-between items-center mb-8'>
+                         <h3 className="font-black text-slate-800 dark:text-slate-100 text-2xl tracking-tight flex items-center">
+                            <TrendingUp size={28} className="mr-4 text-indigo-600 dark:text-indigo-400"/> 
+                            Análise Gemini Business
+                         </h3>
+                         <button onClick={fetchAIInsights} disabled={isLoadingAI} className="p-3 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 rounded-2xl hover:bg-indigo-100 dark:hover:bg-indigo-800 disabled:opacity-50 transition-all">
+                            <RefreshCw size={20} className={isLoadingAI ? "animate-spin" : ""} />
+                         </button>
+                      </div>
                      <div className="text-slate-600 dark:text-slate-300 text-base leading-relaxed whitespace-pre-wrap bg-slate-50/50 dark:bg-slate-800/40 p-10 rounded-[32px] italic border border-slate-100 dark:border-slate-800 shadow-inner min-h-[200px] flex items-center justify-center">
-                        {aiInsights ? (
-                           <div className="w-full font-medium">
-                              {aiInsights}
-                           </div>
-                        ) : (
+                        {isLoadingAI ? (
                            <div className="flex flex-col items-center gap-4 text-slate-300 dark:text-slate-700">
                               <RefreshCw className="animate-spin" size={32}/>
                               <span className="font-black uppercase tracking-widest text-xs">A Coruja está pensando...</span>
+                           </div>
+                        ) : (
+                           <div className="w-full font-medium">
+                              {aiInsights || "Clique no botão de atualizar para gerar a análise de negócios."}
                            </div>
                         )}
                      </div>
@@ -869,6 +1301,41 @@ export default function App() {
         </main>
 
         {/* --- MODAIS (Com suporte a Dark Mode) --- */}
+        <CredentialsModal 
+          isOpen={isCredentialsModalOpen}
+          onClose={() => setIsCredentialsModalOpen(false)}
+          onSave={handleSaveCredentials}
+          currentApiKey={apiKey}
+          currentClientId={clientId}
+        />
+
+        {(scanLoading || expenseScanLoading) && (
+            <div className="fixed inset-0 z-[80] flex flex-col items-center justify-center bg-black/70 backdrop-blur-md p-4 text-white animate-in fade-in duration-300">
+                <RefreshCw className="animate-spin mb-4" size={32}/>
+                <span className="text-sm font-black uppercase tracking-widest">{scanLoading ? "Processando NF..." : "Processando Fatura..."}</span>
+            </div>
+        )}
+
+        {isScanResultsModalOpen && (
+            <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 backdrop-blur-md p-4 animate-in fade-in duration-300">
+                <div className="bg-white dark:bg-slate-800 rounded-[32px] p-6 shadow-2xl w-full max-w-2xl animate-in slide-in-from-bottom-8">
+                    <h3 className="font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest text-[11px] mb-4">Itens Encontrados na NF</h3>
+                    <div className="max-h-[50vh] overflow-y-auto space-y-2 pr-2">
+                        {scannedResults.length > 0 ? scannedResults.map((r, i) => (
+                            <div key={i} className="grid grid-cols-4 gap-4 items-center p-3 bg-slate-50 dark:bg-slate-900/50 rounded-xl text-sm">
+                                <span className="col-span-2 font-bold text-slate-700 dark:text-slate-200">{r.name}</span>
+                                <span className="font-semibold text-slate-500 dark:text-slate-400">{r.quantity} un</span>
+                                <span className="font-black text-indigo-600 dark:text-indigo-400 text-right">R$ {r.costPrice.toFixed(2)}</span>
+                            </div>
+                        )) : <p className="text-center p-8 text-slate-400">Nenhum item encontrado.</p>}
+                    </div>
+                    <div className="flex gap-4 mt-6">
+                        <button onClick={() => setIsScanResultsModalOpen(false)} className="flex-1 py-5 bg-slate-100 dark:bg-slate-700 rounded-2xl font-black text-slate-400 dark:text-slate-300">FECHAR</button>
+                        <button onClick={confirmImport} className="flex-2 bg-emerald-600 text-white py-5 rounded-2xl font-black shadow-lg" disabled={scannedResults.length === 0}>IMPORTAR TUDO</button>
+                    </div>
+                </div>
+            </div>
+        )}
 
         {isPaymentModalOpen && selectedCustomerForPayment && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-md p-4 animate-in fade-in duration-300">
@@ -953,75 +1420,157 @@ export default function App() {
                          <input type="number" className="w-full p-4 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-indigo-600 dark:focus:border-indigo-500 dark:text-slate-100 rounded-2xl outline-none" value={newProduct.stock || ''} onChange={e => setNewProduct({...newProduct, stock: Number(e.target.value)})} />
                       </div>
                       <div className="space-y-1">
-                         <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest ml-1">Alerta Mín.</label>
+                         <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest ml-1">Estoque Mín.</label>
                          <input type="number" className="w-full p-4 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-indigo-600 dark:focus:border-indigo-500 dark:text-slate-100 rounded-2xl outline-none" value={newProduct.minStock || ''} onChange={e => setNewProduct({...newProduct, minStock: Number(e.target.value)})} />
                       </div>
                    </div>
-                </div>
-                <div className="flex gap-4 mt-10">
-                   <button onClick={() => setIsProductModalOpen(false)} className="flex-1 font-black text-slate-400 dark:text-slate-600 uppercase tracking-widest text-[11px]">CANCELAR</button>
-                   <button onClick={handleSaveProduct} className="flex-2 bg-indigo-600 dark:bg-indigo-500 text-white py-5 rounded-3xl font-black shadow-xl dark:shadow-none transition-all">SALVAR</button>
+                   <div className="flex gap-4 mt-8">
+                      <button onClick={() => { setIsProductModalOpen(false); setEditingProduct(null); }} className="flex-1 py-5 bg-slate-100 dark:bg-slate-800 rounded-2xl font-black text-slate-400 dark:text-slate-300 uppercase text-sm tracking-widest">Cancelar</button>
+                      <button onClick={handleSaveProduct} className="flex-[2] bg-indigo-600 text-white py-5 rounded-2xl font-black shadow-lg shadow-indigo-100 dark:shadow-none transition-all active:scale-95">SALVAR PRODUTO</button>
+                   </div>
                 </div>
              </div>
           </div>
         )}
-
-        {(isScanning || isExpenseScanning) && (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-xl p-4 animate-in fade-in">
-            <div className="bg-white dark:bg-slate-900 w-full max-w-3xl rounded-[48px] overflow-hidden shadow-2xl animate-in zoom-in duration-500 border dark:border-slate-800">
-              <div className="p-6 border-b dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/20">
-                 <div className="flex items-center gap-3 ml-4">
-                    <div className="w-3 h-3 bg-indigo-600 dark:bg-indigo-500 rounded-full animate-ping"></div>
-                    <h3 className="font-black text-slate-800 dark:text-slate-200 uppercase tracking-widest text-sm">IA Vision Ativo</h3>
-                 </div>
-                 <button onClick={() => { stopCamera(); setIsScanning(false); setIsExpenseScanning(false); }} className="p-3 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-2xl transition-all"><X size={24}/></button>
-              </div>
-              <div className="relative aspect-video bg-black">
-                 <video ref={videoRef} className="w-full h-full object-cover" playsInline autoPlay muted />
-                 <canvas ref={canvasRef} className="hidden" />
-                 {(scanLoading || expenseScanLoading) && (
-                    <div className="absolute inset-0 bg-indigo-900/40 backdrop-blur-md flex flex-col items-center justify-center text-white p-10 text-center">
-                       <RefreshCw className="animate-spin mb-6" size={64}/>
-                       <h4 className="text-2xl font-black tracking-tighter mb-2">Processando...</h4>
-                       <p className="text-indigo-200 text-sm font-medium">Extraindo dados via Gemini 3.0</p>
-                    </div>
-                 )}
-                 {!(scanLoading || expenseScanLoading) && scannedResults.length === 0 && (
-                    <>
-                       <div className="absolute inset-0 border-[40px] border-black/20 pointer-events-none"></div>
-                       <button onClick={isScanning ? capturePhotoNF : captureExpensePhoto} className="absolute bottom-12 left-1/2 -translate-x-1/2 bg-white w-20 h-20 rounded-full border-[8px] border-indigo-600 shadow-2xl active:scale-90 transition-all flex items-center justify-center">
-                          <Camera size={32} className="text-indigo-600"/>
-                       </button>
-                    </>
-                 )}
-              </div>
-              {scannedResults.length > 0 && (
-                 <div className="p-10 space-y-6 bg-slate-50 dark:bg-slate-800 max-h-96 overflow-y-auto animate-in slide-in-from-bottom-8">
-                    <h4 className="font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest text-xs">Itens Extraídos</h4>
-                    <button onClick={confirmImport} className="w-full bg-emerald-600 text-white py-6 rounded-[24px] font-black shadow-xl active:scale-95 transition-all text-lg tracking-tight">IMPORTAR TUDO</button>
-                 </div>
-              )}
-            </div>
-          </div>
-        )}
-
+        
         {isCustomerModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4 animate-in fade-in">
-            <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-[48px] p-10 space-y-6 shadow-2xl animate-in zoom-in duration-300 border dark:border-slate-800">
-              <h3 className="text-3xl font-black text-slate-800 dark:text-slate-100 tracking-tight">Novo Perfil</h3>
-              <div className="space-y-4">
-                 <input type="text" placeholder="Nome do Cliente" className="w-full p-4 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-indigo-600 dark:focus:border-indigo-500 dark:text-slate-100 rounded-2xl font-bold outline-none" value={newCustomer.name} onChange={e => setNewCustomer({...newCustomer, name: e.target.value})} />
-                 <input type="text" placeholder="Celular..." className="w-full p-4 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-indigo-600 dark:focus:border-indigo-500 dark:text-slate-100 rounded-2xl font-bold outline-none" value={newCustomer.phone} onChange={e => setNewCustomer({...newCustomer, phone: e.target.value})} />
-                 <input type="number" placeholder="Limite de Crédito R$" className="w-full p-4 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-indigo-600 dark:focus:border-indigo-500 dark:text-slate-100 rounded-2xl font-black text-xl outline-none" value={newCustomer.creditLimit || ''} onChange={e => setNewCustomer({...newCustomer, creditLimit: Number(e.target.value)})} />
-              </div>
-              <div className="flex gap-4 pt-6">
-                 <button onClick={() => setIsCustomerModalOpen(false)} className="flex-1 font-black text-slate-400 dark:text-slate-600 uppercase tracking-widest text-[11px]">CANCELAR</button>
-                 <button onClick={handleAddCustomer} className="flex-2 bg-indigo-600 dark:bg-indigo-500 text-white py-5 rounded-3xl font-black shadow-lg transition-all active:scale-95">CADASTRAR</button>
-              </div>
-            </div>
+           <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-md p-4 animate-in fade-in">
+             <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-[48px] p-10 shadow-2xl animate-in zoom-in duration-300 border dark:border-slate-800">
+                <h3 className="text-2xl font-black mb-8 text-slate-800 dark:text-slate-100 tracking-tight">Novo Cliente (Fiado)</h3>
+                <div className="space-y-5">
+                   <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest ml-1">Nome Completo</label>
+                      <input type="text" placeholder="Nome do cliente..." className="w-full p-4 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-indigo-600 dark:focus:border-indigo-500 dark:text-slate-100 rounded-2xl font-bold outline-none" value={newCustomer.name} onChange={e => setNewCustomer({...newCustomer, name: e.target.value})} />
+                   </div>
+                   <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                         <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest ml-1">Telefone</label>
+                         <input type="tel" placeholder="(00) 00000-0000" className="w-full p-4 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-indigo-600 dark:focus:border-indigo-500 dark:text-slate-100 rounded-2xl outline-none" value={newCustomer.phone} onChange={e => setNewCustomer({...newCustomer, phone: e.target.value})} />
+                      </div>
+                      <div className="space-y-1">
+                         <label className="text-[10px] font-black text-indigo-400 uppercase tracking-widest ml-1">Limite R$</label>
+                         <input type="number" placeholder="0.00" className="w-full p-4 bg-indigo-50/30 dark:bg-indigo-900/20 border-2 border-transparent focus:border-indigo-600 dark:focus:border-indigo-500 dark:text-slate-100 rounded-2xl font-black outline-none" value={newCustomer.creditLimit || ''} onChange={e => setNewCustomer({...newCustomer, creditLimit: Number(e.target.value)})} />
+                      </div>
+                   </div>
+                   <div className="flex gap-4 mt-8">
+                      <button onClick={() => setIsCustomerModalOpen(false)} className="flex-1 py-5 bg-slate-100 dark:bg-slate-800 rounded-2xl font-black text-slate-400 dark:text-slate-300 uppercase text-sm tracking-widest">Cancelar</button>
+                      <button onClick={handleAddCustomer} className="flex-[2] bg-indigo-600 text-white py-5 rounded-2xl font-black shadow-lg shadow-indigo-100 dark:shadow-none transition-all active:scale-95">SALVAR CLIENTE</button>
+                   </div>
+                </div>
+             </div>
+           </div>
+        )}
+
+        {isScanning && (
+          <div className="fixed inset-0 z-[70] bg-black/80 backdrop-blur-lg flex flex-col items-center justify-center p-4 animate-in fade-in duration-300">
+             <div className="w-full max-w-3xl aspect-video bg-slate-900 rounded-3xl overflow-hidden relative shadow-2xl border-4 border-indigo-600/20">
+                <video ref={videoRef} className="w-full h-full object-cover" playsInline autoPlay muted />
+                <canvas ref={canvasRef} className="hidden" />
+             </div>
+             <div className="mt-8 flex items-center justify-center gap-6">
+                <button onClick={() => { stopCamera(); setIsScanning(false); }} className="w-16 h-16 bg-white/10 backdrop-blur-md rounded-full text-white flex items-center justify-center active:scale-90 transition-all"><X size={24}/></button>
+                <button onClick={capturePhotoNF} className="w-20 h-20 bg-white rounded-full border-[6px] border-indigo-600 shadow-2xl active:scale-90 transition-all"></button>
+                <div className="w-16 h-16"></div>
+             </div>
           </div>
         )}
-    {/* Fixed syntax error by removing extra closing div tag */}
+
+        {isExpenseScanning && (
+          <div className="fixed inset-0 z-[70] bg-black/80 backdrop-blur-lg flex flex-col items-center justify-center p-4 animate-in fade-in duration-300">
+             <div className="w-full max-w-3xl aspect-video bg-slate-900 rounded-3xl overflow-hidden relative shadow-2xl border-4 border-indigo-600/20">
+                <video ref={videoRef} className="w-full h-full object-cover" playsInline autoPlay muted />
+                <canvas ref={canvasRef} className="hidden" />
+             </div>
+             <div className="mt-8 flex items-center justify-center gap-6">
+                <button onClick={() => { stopCamera(); setIsExpenseScanning(false); }} className="w-16 h-16 bg-white/10 backdrop-blur-md rounded-full text-white flex items-center justify-center active:scale-90 transition-all"><X size={24}/></button>
+                <button onClick={captureExpensePhoto} className="w-20 h-20 bg-white rounded-full border-[6px] border-indigo-600 shadow-2xl active:scale-90 transition-all"></button>
+                <div className="w-16 h-16"></div>
+             </div>
+          </div>
+        )}
+
     </div>
   );
 }
+
+// Separate component for credentials modal to keep main component cleaner
+const CredentialsModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  onSave: (apiKey: string, clientId: string) => void;
+  currentApiKey: string;
+  currentClientId: string;
+}> = ({ isOpen, onClose, onSave, currentApiKey, currentClientId }) => {
+  const [apiKey, setApiKey] = useState(currentApiKey);
+  const [clientId, setClientId] = useState(currentClientId);
+  const [showApi, setShowApi] = useState(false);
+  const [showClient, setShowClient] = useState(false);
+
+  useEffect(() => {
+    setApiKey(currentApiKey);
+    setClientId(currentClientId);
+  }, [isOpen, currentApiKey, currentClientId]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-md p-4 animate-in fade-in">
+      <div className="bg-white dark:bg-slate-900 w-full max-w-xl rounded-[48px] p-10 shadow-2xl animate-in zoom-in duration-300 border dark:border-slate-800 relative">
+        <button onClick={onClose} className="absolute top-6 right-6 p-2 text-slate-300 dark:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all"><X size={28}/></button>
+        <div className="flex items-center gap-4 mb-8">
+           <div className="p-3 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 rounded-2xl"><KeyRound size={32}/></div>
+           <div>
+              <h3 className="text-3xl font-black text-slate-800 dark:text-slate-100 tracking-tight">Credenciais Google</h3>
+              <p className="text-slate-400 dark:text-slate-500 font-medium mt-1">Insira suas chaves do Google Cloud Platform.</p>
+           </div>
+        </div>
+        
+        <div className="space-y-6">
+          <div className="space-y-1">
+            <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest ml-1">Chave de API</label>
+            <div className="relative">
+              <input 
+                type={showApi ? 'text' : 'password'}
+                placeholder="Cole sua Chave de API aqui" 
+                className="w-full p-4 pl-6 pr-12 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-indigo-600 dark:focus:border-indigo-500 dark:text-slate-100 rounded-2xl font-mono text-sm tracking-wider outline-none" 
+                value={apiKey} 
+                onChange={e => setApiKey(e.target.value)} 
+              />
+              <button onClick={() => setShowApi(!showApi)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 dark:text-slate-600">
+                {showApi ? <EyeOff size={20}/> : <Eye size={20}/>}
+              </button>
+            </div>
+          </div>
+          <div className="space-y-1">
+            <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest ml-1">ID do Cliente OAuth 2.0</label>
+            <div className="relative">
+              <input 
+                type={showClient ? 'text' : 'password'}
+                placeholder="Cole seu ID do Cliente aqui" 
+                className="w-full p-4 pl-6 pr-12 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-indigo-600 dark:focus:border-indigo-500 dark:text-slate-100 rounded-2xl font-mono text-sm tracking-wider outline-none" 
+                value={clientId} 
+                onChange={e => setClientId(e.target.value)} 
+              />
+              <button onClick={() => setShowClient(!showClient)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 dark:text-slate-600">
+                {showClient ? <EyeOff size={20}/> : <Eye size={20}/>}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-8 pt-8 border-t dark:border-slate-800 text-center">
+            <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer" className="text-indigo-600 dark:text-indigo-400 font-bold text-xs flex items-center justify-center gap-2 mb-6 hover:underline">
+               Não sabe onde encontrar? Visite o Google Cloud Console <ExternalLink size={14}/>
+            </a>
+            <button 
+              onClick={() => onSave(apiKey, clientId)} 
+              className="w-full bg-indigo-600 text-white py-6 rounded-3xl font-black shadow-2xl dark:shadow-none hover:bg-indigo-700 transition-all text-lg uppercase disabled:opacity-50"
+              disabled={!apiKey || !clientId}
+            >
+              SALVAR E CONECTAR
+            </button>
+        </div>
+      </div>
+    </div>
+  );
+};
