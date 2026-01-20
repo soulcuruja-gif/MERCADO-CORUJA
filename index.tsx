@@ -1,20 +1,16 @@
+
 import React from 'react';
-import { createRoot } from 'react-dom/client';
-import App from './App.tsx';
+import ReactDOM from 'react-dom/client';
+import App from './App';
 
-try {
-  const rootElement = document.getElementById('root');
-  if (!rootElement) {
-    throw new Error("Elemento #root não encontrado no HTML.");
-  }
-
-  const root = createRoot(rootElement);
-  root.render(
-    <React.StrictMode>
-      <App />
-    </React.StrictMode>
-  );
-  console.log("App montado com sucesso.");
-} catch (error) {
-  console.error("Erro fatal na montagem do React:", error);
+const rootElement = document.getElementById('root');
+if (!rootElement) {
+  throw new Error("Could not find root element to mount to");
 }
+
+const root = ReactDOM.createRoot(rootElement);
+root.render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);

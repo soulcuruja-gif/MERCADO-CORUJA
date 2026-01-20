@@ -1,26 +1,24 @@
-export const Category = {
-  BEBIDAS: 'Bebidas',
-  ALIMENTOS: 'Alimentos',
-  LIMPEZA: 'Limpeza',
-  HIGIENE: 'Higiene',
-  OUTROS: 'Outros'
-} as const;
-export type Category = typeof Category[keyof typeof Category];
 
-export const PaymentMethod = {
-  PIX: 'PIX',
-  DINHEIRO: 'Dinheiro',
-  FIADO: 'Fiado',
-  CREDITO: 'Crédito',
-  DEBITO: 'Débito'
-} as const;
-export type PaymentMethod = typeof PaymentMethod[keyof typeof PaymentMethod];
+export enum Category {
+  BEBIDAS = 'Bebidas',
+  ALIMENTOS = 'Alimentos',
+  LIMPEZA = 'Limpeza',
+  HIGIENE = 'Higiene',
+  OUTROS = 'Outros'
+}
 
-export const ExpenseType = {
-  FIXA: 'Fixa',
-  ESTOQUE: 'Estoque'
-} as const;
-export type ExpenseType = typeof ExpenseType[keyof typeof ExpenseType];
+export enum PaymentMethod {
+  PIX = 'PIX',
+  DINHEIRO = 'Dinheiro',
+  FIADO = 'Fiado',
+  CREDITO = 'Crédito',
+  DEBITO = 'Débito'
+}
+
+export enum ExpenseType {
+  FIXA = 'Fixa',
+  ESTOQUE = 'Estoque'
+}
 
 export interface Product {
   id: string;
@@ -49,7 +47,7 @@ export interface Sale {
   totalCost: number;
   profit: number;
   paymentMethod: PaymentMethod;
-  customerId?: string;
+  customerId?: string; // Associated customer for "Fiado" payments
 }
 
 export interface Expense {
