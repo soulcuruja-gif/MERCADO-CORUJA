@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { 
   LayoutDashboard, 
@@ -127,6 +126,7 @@ const STORAGE_KEYS = {
   CUSTOMERS: 'coruja_customers',
   DARK_MODE: 'coruja_dark_mode',
   CLIENT_ID: 'coruja_google_client_id',
+  GEMINI_API_KEY: 'coruja_gemini_api_key',
 };
 
 // --- Main App Component ---
@@ -160,18 +160,19 @@ export default function App() {
     return saved ? JSON.parse(saved) : INITIAL_CUSTOMERS;
   });
   
-  // --- Google Drive State ---
+  // --- API Keys State ---
   const [clientId, setClientId] = useState(() => localStorage.getItem(STORAGE_KEYS.CLIENT_ID) || '');
+  const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem(STORAGE_KEYS.GEMINI_API_KEY) || '');
+
+  // --- Google Drive State ---
   const [isDriveAuthenticated, setIsDriveAuthenticated] = useState(false);
   const [isDriveLoading, setIsDriveLoading] = useState(false);
   const [driveUser, setDriveUser] = useState<any>(null);
   const [tokenClient, setTokenClient] = useState<any>(null);
   const [googleScriptsLoaded, setGoogleScriptsLoaded] = useState(false);
   const scriptsInitiated = useRef(false);
-  const [isCredentialsModalOpen, setIsCredentialsModalOpen] = useState(false);
+  const [isApiKeysModalOpen, setIsApiKeysModalOpen] = useState(false);
   
-  const GEMINI_API_KEY = process.env.API_KEY || '';
-
   // --- DARK MODE EFFECT ---
   useEffect(() => {
     if (isDarkMode) {
@@ -187,6 +188,8 @@ export default function App() {
   useEffect(() => { localStorage.setItem(STORAGE_KEYS.SALES, JSON.stringify(sales)); }, [sales]);
   useEffect(() => { localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(expenses)); }, [expenses]);
   useEffect(() => { localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(customers)); }, [customers]);
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.CLIENT_ID, clientId); }, [clientId]);
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.GEMINI_API_KEY, geminiApiKey); }, [geminiApiKey]);
 
   // Filters & Global States
   const [filterStartDate, setFilterStartDate] = useState(() => {
@@ -311,7 +314,7 @@ export default function App() {
   
   const handleDeleteSale = (id: string) => { if (!confirm("Estornar?")) return; const s = sales.find(sa => sa.id === id); if (s) { setProducts(prev => prev.map(p => { const it = s.items.find(si => si.productId === p.id); return it ? { ...p, stock: p.stock + it.quantity } : p; })); if (s.paymentMethod === PaymentMethod.FIADO && s.customerId) setCustomers(prev => prev.map(cu => cu.id === s.customerId ? { ...cu, currentDebt: Math.max(0, Number((cu.currentDebt - s.total).toFixed(2))) } : cu)); } setSales(prev => prev.filter(sa => sa.id !== id)); };
 
-  const capturePOSPhoto = async () => { if (canvasRef.current && videoRef.current) { setPosLoading(true); const ctx = canvasRef.current.getContext('2d'); canvasRef.current.width = videoRef.current.videoWidth; canvasRef.current.height = videoRef.current.videoHeight; ctx?.drawImage(videoRef.current, 0, 0); const base64 = canvasRef.current.toDataURL('image/jpeg').split(',')[1]; try { const product = await identifyProductFromImage(base64, products); if (product) setPendingProduct(product); else alert("Produto não identificado."); } catch (e) { alert("Erro ao identificar."); } finally { setPosLoading(false); } } };
+  const capturePOSPhoto = async () => { if (canvasRef.current && videoRef.current) { setPosLoading(true); const ctx = canvasRef.current.getContext('2d'); canvasRef.current.width = videoRef.current.videoWidth; canvasRef.current.height = videoRef.current.videoHeight; ctx?.drawImage(videoRef.current, 0, 0); const base64 = canvasRef.current.toDataURL('image/jpeg').split(',')[1]; try { const product = await identifyProductFromImage(base64, products, geminiApiKey); if (product) setPendingProduct(product); else alert("Produto não identificado."); } catch (e) { alert("Erro ao identificar. Verifique sua chave Gemini em Ajustes."); } finally { setPosLoading(false); } } };
   const deleteProduct = (id: string) => { if (confirm("Excluir produto?")) setProducts(prev => prev.filter(p => p.id !== id)); };
   const handleAddOrUpdateExpense = () => { if (!newExpense.description || !newExpense.amount) return alert("Preencha tudo."); const exp = { id: editingExpenseId || `e${Date.now()}`, date: new Date().toISOString(), dueDate: newExpense.dueDate || new Date().toISOString().split('T')[0], description: newExpense.description, amount: newExpense.amount, type: newExpense.type, isPaid: false }; if (editingExpenseId) setExpenses(prev => prev.map(e => e.id === editingExpenseId ? exp : e)); else setExpenses(prev => [...prev, exp]); setNewExpense({ description: '', amount: 0, dueDate: '', type: ExpenseType.FIXA }); setEditingExpenseId(null); };
   const handleRegisterPayment = () => { if (!selectedCustomerForPayment || !paymentAmount) return; const amount = Number(paymentAmount); setCustomers(prev => prev.map(c => c.id === selectedCustomerForPayment.id ? { ...c, currentDebt: Math.max(0, Number((c.currentDebt - amount).toFixed(2))), totalPaid: Number((c.totalPaid + amount).toFixed(2)) } : c)); setIsPaymentModalOpen(false); setPaymentAmount(""); setSelectedCustomerForPayment(null); };
@@ -329,7 +332,7 @@ export default function App() {
             const [header, base64Data] = dataUrl.split(',');
             const mimeType = header.match(/:(.*?);/)?.[1] || file.type;
             
-            const results = await extractProductsFromMedia(base64Data, mimeType);
+            const results = await extractProductsFromMedia(base64Data, mimeType, geminiApiKey);
             if(results.length > 0) {
                 setScannedResults(results);
                 setIsScanResultsModalOpen(true);
@@ -337,7 +340,7 @@ export default function App() {
                 alert("Nenhum produto encontrado no arquivo.");
             }
         } catch (err) {
-            alert("Erro ao processar o arquivo da NF.");
+            alert("Erro ao processar o arquivo da NF. Verifique sua chave Gemini em Ajustes.");
             console.error(err);
         } finally {
             setScanLoading(false);
@@ -359,10 +362,10 @@ export default function App() {
             const [header, base64Data] = dataUrl.split(',');
             const mimeType = header.match(/:(.*?);/)?.[1] || file.type;
 
-            const result = await extractExpenseFromMedia(base64Data, mimeType);
+            const result = await extractExpenseFromMedia(base64Data, mimeType, geminiApiKey);
             setNewExpense({ description: result.description, amount: result.amount, dueDate: result.dueDate, type: result.type });
         } catch (err) {
-            alert("Erro ao processar o arquivo da fatura.");
+            alert("Erro ao processar o arquivo da fatura. Verifique sua chave Gemini em Ajustes.");
             console.error(err);
         } finally {
             setExpenseScanLoading(false);
@@ -381,11 +384,11 @@ export default function App() {
       ctx?.drawImage(videoRef.current, 0, 0); 
       const base64 = canvasRef.current.toDataURL('image/jpeg').split(',')[1]; 
       try { 
-        const results = await extractProductsFromMedia(base64, 'image/jpeg'); 
+        const results = await extractProductsFromMedia(base64, 'image/jpeg', geminiApiKey); 
         setScannedResults(results); 
         setIsScanResultsModalOpen(true);
       } catch (e) { 
-        alert("Erro ao ler NF."); 
+        alert("Erro ao ler NF. Verifique sua chave Gemini em Ajustes."); 
       } finally { 
         setScanLoading(false); 
         stopCamera();
@@ -403,12 +406,12 @@ export default function App() {
       ctx?.drawImage(videoRef.current, 0, 0); 
       const base64 = canvasRef.current.toDataURL('image/jpeg').split(',')[1]; 
       try { 
-        const result = await extractExpenseFromMedia(base64, 'image/jpeg'); 
+        const result = await extractExpenseFromMedia(base64, 'image/jpeg', geminiApiKey); 
         setNewExpense({ description: result.description, amount: result.amount, dueDate: result.dueDate, type: result.type }); 
         stopCamera(); 
         setIsExpenseScanning(false); 
       } catch (e) { 
-        alert("Erro ao ler fatura."); 
+        alert("Erro ao ler fatura. Verifique sua chave Gemini em Ajustes."); 
       } finally { 
         setExpenseScanLoading(false); 
       } 
@@ -538,12 +541,17 @@ export default function App() {
     }
   }, [clientId, initializeGoogleClients]);
 
-  const handleSaveCredentials = (newClientId: string) => {
-    localStorage.setItem(STORAGE_KEYS.CLIENT_ID, newClientId);
-    setClientId(newClientId);
-    setIsCredentialsModalOpen(false);
-    scriptsInitiated.current = false;
-    setGoogleScriptsLoaded(false);
+  const handleSaveApiKeys = (keys: { clientId: string; geminiApiKey: string }) => {
+    setClientId(keys.clientId);
+    setGeminiApiKey(keys.geminiApiKey);
+    setIsApiKeysModalOpen(false);
+    
+    // Reset and re-initialize Google scripts if Client ID changed
+    if (keys.clientId !== clientId) {
+      scriptsInitiated.current = false;
+      setGoogleScriptsLoaded(false);
+      initializeGoogleClients(keys.clientId);
+    }
   };
 
   const handleDriveAuth = () => {
@@ -632,6 +640,11 @@ export default function App() {
       return;
     }
     
+    if (!geminiApiKey) {
+      alert("Por favor, configure sua Chave da API do Gemini em 'Ajustes' para usar o seletor de arquivos.");
+      return;
+    }
+
     const token = window.gapi.client.getToken();
     if (!token || !token.access_token) {
         alert("Sessão expirada. Por favor, conecte-se novamente.");
@@ -650,7 +663,7 @@ export default function App() {
     const picker = new window.google.picker.PickerBuilder()
       .addView(view)
       .setOAuthToken(token.access_token)
-      .setDeveloperKey(GEMINI_API_KEY)
+      .setDeveloperKey(geminiApiKey)
       .setCallback(pickerCallback)
       .build();
     picker.setVisible(true);
@@ -883,25 +896,25 @@ export default function App() {
                         <p className="text-slate-400 dark:text-slate-500 mt-4 text-base leading-relaxed max-w-xl font-medium">Conecte sua conta Google para salvar e restaurar seus dados de forma segura no Google Drive.</p>
                         
                         <div className="mt-10 bg-slate-50 dark:bg-slate-800/50 p-8 rounded-[32px] border border-slate-100 dark:border-slate-800">
-                        {!clientId ? (
+                        {!clientId || !geminiApiKey ? (
                            <div className="flex flex-col items-center text-center">
                               <img src="https://upload.wikimedia.org/wikipedia/commons/d/da/Google_Drive_logo.png" alt="Google Drive" className="w-16 h-16 mb-4"/>
-                              <h4 className="font-black text-slate-800 dark:text-slate-100 text-xl mb-2">Conecte seu Google Drive</h4>
-                              <p className="text-sm text-slate-400 dark:text-slate-500 mb-6 max-w-sm">Para começar, configure suas credenciais da API do Google. Você só precisa fazer isso uma vez.</p>
-                              <button onClick={() => setIsCredentialsModalOpen(true)} className="bg-indigo-600 text-white font-black py-5 px-10 rounded-2xl shadow-lg hover:bg-indigo-700 transition-all active:scale-95 flex items-center gap-3">
-                                <Settings size={20}/> CONFIGURAR CONEXÃO
+                              <h4 className="font-black text-slate-800 dark:text-slate-100 text-xl mb-2">Conecte suas Contas</h4>
+                              <p className="text-sm text-slate-400 dark:text-slate-500 mb-6 max-w-sm">Para começar, configure suas chaves de API do Google e do Gemini. Você só precisa fazer isso uma vez.</p>
+                              <button onClick={() => setIsApiKeysModalOpen(true)} className="bg-indigo-600 text-white font-black py-5 px-10 rounded-2xl shadow-lg hover:bg-indigo-700 transition-all active:scale-95 flex items-center gap-3">
+                                <Settings size={20}/> CONFIGURAR CHAVES
                               </button>
                             </div>
                         ) : !isDriveAuthenticated ? (
                             <div className="flex flex-col items-center text-center">
                                 <img src="https://upload.wikimedia.org/wikipedia/commons/d/da/Google_Drive_logo.png" alt="Google Drive" className="w-16 h-16 mb-4"/>
                                 <h4 className="font-black text-slate-800 dark:text-slate-100 text-xl mb-2">Conectar ao Google Drive</h4>
-                                <p className="text-sm text-slate-400 dark:text-slate-500 mb-6 max-w-sm">Suas credenciais estão salvas. Autorize o acesso para começar a usar o backup na nuvem.</p>
+                                <p className="text-sm text-slate-400 dark:text-slate-500 mb-6 max-w-sm">Suas chaves estão salvas. Autorize o acesso para começar a usar o backup na nuvem.</p>
                                 <div className="flex flex-col items-center gap-4">
                                   <button onClick={handleDriveAuth} disabled={!googleScriptsLoaded} className="bg-white text-slate-700 font-black py-5 px-10 rounded-2xl shadow-lg hover:bg-slate-200 transition-all active:scale-95 flex items-center gap-3 disabled:opacity-50 disabled:cursor-wait">
                                       {!googleScriptsLoaded && <RefreshCw size={20} className="animate-spin" />} CONECTAR AO GOOGLE
                                   </button>
-                                  <button onClick={() => setIsCredentialsModalOpen(true)} className="text-xs text-slate-400 hover:text-indigo-500 transition-colors">Editar credenciais</button>
+                                  <button onClick={() => setIsApiKeysModalOpen(true)} className="text-xs text-slate-400 hover:text-indigo-500 transition-colors">Editar chaves</button>
                                 </div>
                             </div>
                         ) : (
@@ -1230,11 +1243,12 @@ export default function App() {
         </main>
 
         {/* --- MODAIS (Com suporte a Dark Mode) --- */}
-        <GoogleCredentialsModal 
-          isOpen={isCredentialsModalOpen}
-          onClose={() => setIsCredentialsModalOpen(false)}
-          onSave={handleSaveCredentials}
+        <ApiKeysModal 
+          isOpen={isApiKeysModalOpen}
+          onClose={() => setIsApiKeysModalOpen(false)}
+          onSave={handleSaveApiKeys}
           currentClientId={clientId}
+          currentGeminiApiKey={geminiApiKey}
         />
 
         {(scanLoading || expenseScanLoading) && (
@@ -1422,18 +1436,22 @@ export default function App() {
 }
 
 
-const GoogleCredentialsModal: React.FC<{
+const ApiKeysModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
-  onSave: (clientId: string) => void;
+  onSave: (keys: { clientId: string; geminiApiKey: string }) => void;
   currentClientId: string;
-}> = ({ isOpen, onClose, onSave, currentClientId }) => {
+  currentGeminiApiKey: string;
+}> = ({ isOpen, onClose, onSave, currentClientId, currentGeminiApiKey }) => {
   const [clientId, setClientId] = useState(currentClientId);
+  const [geminiApiKey, setGeminiApiKey] = useState(currentGeminiApiKey);
   const [showClient, setShowClient] = useState(false);
+  const [showGemini, setShowGemini] = useState(false);
 
   useEffect(() => {
     setClientId(currentClientId);
-  }, [isOpen, currentClientId]);
+    setGeminiApiKey(currentGeminiApiKey);
+  }, [isOpen, currentClientId, currentGeminiApiKey]);
 
   if (!isOpen) return null;
 
@@ -1444,14 +1462,14 @@ const GoogleCredentialsModal: React.FC<{
         <div className="flex items-center gap-4 mb-8">
            <div className="p-3 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 rounded-2xl"><KeyRound size={32}/></div>
            <div>
-              <h3 className="text-3xl font-black text-slate-800 dark:text-slate-100 tracking-tight">Credenciais Google</h3>
-              <p className="text-slate-400 dark:text-slate-500 font-medium mt-1">Insira seu ID de Cliente para conectar ao Google Drive.</p>
+              <h3 className="text-3xl font-black text-slate-800 dark:text-slate-100 tracking-tight">Chaves de API</h3>
+              <p className="text-slate-400 dark:text-slate-500 font-medium mt-1">Insira suas chaves para conectar aos serviços Google.</p>
            </div>
         </div>
         
         <div className="space-y-6">
           <div className="space-y-1">
-            <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest ml-1">ID do Cliente OAuth 2.0</label>
+            <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest ml-1">ID do Cliente OAuth 2.0 (Google Drive)</label>
             <div className="relative">
               <input 
                 type={showClient ? 'text' : 'password'}
@@ -1465,16 +1483,31 @@ const GoogleCredentialsModal: React.FC<{
               </button>
             </div>
           </div>
+          <div className="space-y-1">
+            <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest ml-1">Chave da API do Gemini (IA e OCR)</label>
+            <div className="relative">
+              <input 
+                type={showGemini ? 'text' : 'password'}
+                placeholder="Cole sua Chave da API do Gemini aqui" 
+                className="w-full p-4 pl-6 pr-12 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-indigo-600 dark:focus:border-indigo-500 dark:text-slate-100 rounded-2xl font-mono text-sm tracking-wider outline-none" 
+                value={geminiApiKey} 
+                onChange={e => setGeminiApiKey(e.target.value)} 
+              />
+              <button onClick={() => setShowGemini(!showGemini)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 dark:text-slate-600">
+                {showGemini ? <EyeOff size={20}/> : <Eye size={20}/>}
+              </button>
+            </div>
+          </div>
         </div>
 
         <div className="mt-8 pt-8 border-t dark:border-slate-800 text-center">
-            <a href="https://console.cloud.google.com/apis/credentials/oauthclient" target="_blank" rel="noopener noreferrer" className="text-indigo-600 dark:text-indigo-400 font-bold text-xs flex items-center justify-center gap-2 mb-6 hover:underline">
-               Não sabe onde encontrar? Visite o Google Cloud Console <ExternalLink size={14}/>
+            <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-indigo-600 dark:text-indigo-400 font-bold text-xs flex items-center justify-center gap-2 mb-6 hover:underline">
+               Obtenha suas chaves no Google AI Studio & Cloud Console <ExternalLink size={14}/>
             </a>
             <button 
-              onClick={() => onSave(clientId)} 
+              onClick={() => onSave({ clientId, geminiApiKey })} 
               className="w-full bg-indigo-600 text-white py-6 rounded-3xl font-black shadow-2xl dark:shadow-none hover:bg-indigo-700 transition-all text-lg uppercase disabled:opacity-50"
-              disabled={!clientId}
+              disabled={!clientId || !geminiApiKey}
             >
               SALVAR E CONECTAR
             </button>
