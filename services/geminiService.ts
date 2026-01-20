@@ -4,32 +4,6 @@ import { Product, Sale, Expense, ScannedProduct, Category, ScannedExpense, Expen
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-export const getBusinessInsights = async (products: Product[], sales: Sale[], expenses: Expense[]) => {
-  const prompt = `
-    Analise os seguintes dados de um mini-mercado e forneça insights estratégicos (em português):
-    
-    Produtos: ${JSON.stringify(products.map(p => ({ name: p.name, stock: p.stock, minStock: p.minStock, margin: ((p.salePrice - p.costPrice)/p.salePrice * 100).toFixed(2) + '%' })))}
-    Vendas Totais: ${sales.length} transações, Total: R$ ${sales.reduce((acc, s) => acc + s.total, 0).toFixed(2)}
-    Despesas: R$ ${expenses.reduce((acc, e) => acc + e.amount, 0).toFixed(2)}
-
-    Por favor, retorne um resumo com:
-    1. Itens críticos de estoque.
-    2. Produtos com margens baixas ou altas.
-    3. Uma dica para aumentar a lucratividade este mês.
-  `;
-
-  try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: prompt,
-    });
-    return response.text;
-  } catch (error) {
-    console.error("Gemini Insight Error:", error);
-    return "Não foi possível gerar insights no momento.";
-  }
-};
-
 export const extractProductsFromMedia = async (base64Data: string, mimeType: string): Promise<ScannedProduct[]> => {
   const prompt = `
     Extraia a lista de produtos desta Nota Fiscal (NF). 

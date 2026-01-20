@@ -60,7 +60,7 @@ import {
 
 import { Product, Sale, Expense, View, Category, SaleItem, ScannedProduct, PaymentMethod, ExpenseType, Customer } from './types';
 import { INITIAL_PRODUCTS, INITIAL_EXPENSES, INITIAL_SALES, INITIAL_CUSTOMERS } from './constants';
-import { getBusinessInsights, extractProductsFromMedia, identifyProductFromImage, extractExpenseFromMedia } from './services/geminiService';
+import { extractProductsFromMedia, identifyProductFromImage, extractExpenseFromMedia } from './services/geminiService';
 
 declare global {
   interface Window {
@@ -126,7 +126,6 @@ const STORAGE_KEYS = {
   EXPENSES: 'coruja_expenses',
   CUSTOMERS: 'coruja_customers',
   DARK_MODE: 'coruja_dark_mode',
-  API_KEY: 'coruja_google_api_key',
   CLIENT_ID: 'coruja_google_client_id',
 };
 
@@ -162,7 +161,6 @@ export default function App() {
   });
   
   // --- Google Drive State ---
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem(STORAGE_KEYS.API_KEY) || '');
   const [clientId, setClientId] = useState(() => localStorage.getItem(STORAGE_KEYS.CLIENT_ID) || '');
   const [isDriveAuthenticated, setIsDriveAuthenticated] = useState(false);
   const [isDriveLoading, setIsDriveLoading] = useState(false);
@@ -171,6 +169,8 @@ export default function App() {
   const [googleScriptsLoaded, setGoogleScriptsLoaded] = useState(false);
   const scriptsInitiated = useRef(false);
   const [isCredentialsModalOpen, setIsCredentialsModalOpen] = useState(false);
+  
+  const GEMINI_API_KEY = process.env.API_KEY || '';
 
   // --- DARK MODE EFFECT ---
   useEffect(() => {
@@ -199,9 +199,7 @@ export default function App() {
   });
   const [selectedHistoryDate, setSelectedHistoryDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [defaultMargin, setDefaultMargin] = useState(35);
-  const [aiInsights, setAiInsights] = useState<string>("");
-  const [isLoadingAI, setIsLoadingAI] = useState(false);
-
+  
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -466,30 +464,16 @@ export default function App() {
   const totalSales = filteredSales.reduce((acc, s) => acc + s.total, 0);
   const pendingExpenses = expenses.filter(e => !e.isPaid).reduce((acc, e) => acc + e.amount, 0);
   const totalOutstandingDebt = customers.reduce((acc, c) => acc + c.currentDebt, 0);
-
-  // AI Insights call
-  const fetchAIInsights = useCallback(async () => {
-    setIsLoadingAI(true);
-    setAiInsights("");
-    try {
-      const insights = await getBusinessInsights(products, filteredSales, expenses);
-      setAiInsights(insights || "Nenhum insight disponível.");
-    } catch (error) {
-      console.error(error);
-      setAiInsights("Ocorreu um erro ao buscar insights. Verifique sua cota de API.");
-    } finally {
-      setIsLoadingAI(false);
-    }
-  }, [products, filteredSales, expenses]);
-
-  useEffect(() => {
-    fetchAIInsights();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const dailySales = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0];
+    return sales
+        .filter(s => s.date.startsWith(today))
+        .reduce((acc, s) => acc + s.total, 0);
+  }, [sales]);
 
   // --- Google Drive Integration ---
-  const initializeGoogleClients = useCallback((currentApiKey: string, currentClientId: string) => {
-    if (scriptsInitiated.current) return;
+  const initializeGoogleClients = useCallback((currentClientId: string) => {
+    if (scriptsInitiated.current || !currentClientId) return;
     scriptsInitiated.current = true;
   
     const gapiScript = document.createElement('script');
@@ -511,17 +495,21 @@ export default function App() {
             if (tokenResponse && tokenResponse.access_token) {
               window.gapi.client.setToken(tokenResponse);
               setIsDriveAuthenticated(true);
+              
+              // Load the Drive client library here, after we have the token
+              window.gapi.client.load('drive', 'v3').then(() => {
+                console.log("GAPI client for Drive loaded.");
+              }).catch((err: any) => {
+                console.error("Error loading GAPI Drive client:", err);
+                alert("Falha ao carregar a API do Google Drive após autenticação.");
+              });
+
               fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
                 headers: { 'Authorization': `Bearer ${tokenResponse.access_token}` }
               })
               .then(res => res.json())
-              .then(data => {
-                setDriveUser({
-                  getName: () => data.name,
-                  getEmail: () => data.email,
-                  getImageUrl: () => data.picture,
-                });
-              }).catch(err => console.error("Error fetching user info:", err));
+              .then(data => setDriveUser(data))
+              .catch(err => console.error("Error fetching user info:", err));
             }
           },
         });
@@ -534,18 +522,9 @@ export default function App() {
     };
   
     const handleGapiLoad = () => {
-      window.gapi.load('client:picker', async () => {
-        try {
-          await window.gapi.client.init({
-            apiKey: currentApiKey,
-            discoveryDocs: ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"],
-          });
-          gisScript.onload = handleGisLoad;
-          document.body.appendChild(gisScript);
-        } catch (err: any) {
-          console.error("Error initializing GAPI client:", err);
-          alert(`Falha ao carregar a API do Google Drive: ${err.details || err.message || 'Erro desconhecido'}. Verifique se a 'Drive API' está ativada no seu projeto Google Cloud e se a Chave de API é válida.`);
-        }
+      window.gapi.load('client:picker', () => {
+        gisScript.onload = handleGisLoad;
+        document.body.appendChild(gisScript);
       });
     };
   
@@ -554,30 +533,26 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (apiKey && clientId && !googleScriptsLoaded) {
-      initializeGoogleClients(apiKey, clientId);
+    if (clientId) {
+      initializeGoogleClients(clientId);
     }
-  }, [apiKey, clientId, googleScriptsLoaded, initializeGoogleClients]);
+  }, [clientId, initializeGoogleClients]);
 
-  const handleSaveCredentials = (newApiKey: string, newClientId: string) => {
-    localStorage.setItem(STORAGE_KEYS.API_KEY, newApiKey);
+  const handleSaveCredentials = (newClientId: string) => {
     localStorage.setItem(STORAGE_KEYS.CLIENT_ID, newClientId);
-    setApiKey(newApiKey);
     setClientId(newClientId);
     setIsCredentialsModalOpen(false);
-    // Reset script loading flag to allow re-initialization with new keys
-    scriptsInitiated.current = false; 
+    scriptsInitiated.current = false;
     setGoogleScriptsLoaded(false);
-    // The useEffect will now pick up the new keys and initialize
   };
 
   const handleDriveAuth = () => {
     if (tokenClient) {
       tokenClient.requestAccessToken({ prompt: 'consent' });
-    } else if (!googleScriptsLoaded) {
-      alert("A integração com o Google Drive ainda está carregando ou não foi configurada. Por favor, configure suas credenciais na aba 'Ajustes'.");
+    } else if (!clientId) {
+       alert("Por favor, configure o 'Client ID' do Google na aba 'Ajustes' para conectar sua conta.");
     } else {
-       alert("A configuração do Google Drive está incompleta. Verifique se o ID do Cliente foi fornecido corretamente.");
+       alert("A integração com o Google Drive ainda está carregando. Por favor, aguarde alguns segundos e tente novamente.");
     }
   };
   
@@ -675,7 +650,7 @@ export default function App() {
     const picker = new window.google.picker.PickerBuilder()
       .addView(view)
       .setOAuthToken(token.access_token)
-      .setDeveloperKey(apiKey)
+      .setDeveloperKey(GEMINI_API_KEY)
       .setCallback(pickerCallback)
       .build();
     picker.setVisible(true);
@@ -761,8 +736,8 @@ export default function App() {
           </div>
           <div className="flex items-center space-x-4">
             <div className="hidden sm:flex flex-col items-end">
-              <span className="text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">Saldo em Fiado</span>
-              <span className="text-sm font-black text-rose-600 dark:text-rose-500">R$ {totalOutstandingDebt.toFixed(2)}</span>
+              <span className="text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">Saldo do Dia</span>
+              <span className="text-sm font-black text-emerald-600 dark:text-emerald-500">R$ {dailySales.toFixed(2)}</span>
             </div>
             <div className="w-10 h-10 bg-slate-100 dark:bg-slate-800 rounded-full border-2 border-white dark:border-slate-700 shadow-sm overflow-hidden flex items-center justify-center">
                <img src="https://cdn-icons-png.flaticon.com/512/952/952763.png" alt="Logo" className="w-6 h-6 object-contain" />
@@ -781,8 +756,8 @@ export default function App() {
                 <StatCard title="Contas a Pagar" value={`R$ ${pendingExpenses.toFixed(2)}`} icon={<Receipt size={24} />} trend="Vencendo" />
                 <StatCard title="Ticket Médio" value={`R$ ${(totalSales / (filteredSales.length || 1)).toFixed(2)}`} icon={<HandCoins size={24} />} trendUp={true} />
               </div>
-              <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
-                <div className="xl:col-span-2 bg-white dark:bg-slate-900 p-6 md:p-8 rounded-[32px] border border-slate-100 dark:border-slate-800 shadow-sm h-[400px]">
+              <div className="grid grid-cols-1 gap-8">
+                <div className="bg-white dark:bg-slate-900 p-6 md:p-8 rounded-[32px] border border-slate-100 dark:border-slate-800 shadow-sm h-[400px]">
                    <div className="flex items-center justify-between mb-8">
                       <h3 className="font-black text-slate-800 dark:text-slate-100 text-lg uppercase tracking-tight">Fluxo Diário</h3>
                       <div className="flex items-center space-x-2 text-xs font-bold text-slate-400 dark:text-slate-500">
@@ -808,27 +783,6 @@ export default function App() {
                         <Line type="monotone" dataKey="amount" stroke="#4f46e5" strokeWidth={4} dot={{ r: 6, fill: '#4f46e5', stroke: isDarkMode ? '#0f172a' : '#fff', strokeWidth: 2 }} activeDot={{ r: 8 }} />
                       </LineChart>
                    </ResponsiveContainer>
-                </div>
-                <div className="bg-indigo-900 dark:bg-indigo-950 p-8 rounded-[40px] text-white shadow-2xl flex flex-col justify-between relative overflow-hidden group">
-                   <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:scale-110 transition-transform"><Bell size={120}/></div>
-                   <div className="relative z-10">
-                      <div className="flex items-center justify-between mb-6">
-                         <div className="flex items-center space-x-3">
-                            <div className="bg-indigo-600/50 p-2 rounded-xl"><Bell size={20} className="text-indigo-200" /></div>
-                            <h3 className="font-black text-xl tracking-tight">IA Coruja Insight</h3>
-                         </div>
-                         <button onClick={fetchAIInsights} disabled={isLoadingAI} className="p-2 bg-white/10 rounded-full hover:bg-white/20 disabled:opacity-50 transition-all">
-                            <RefreshCw size={16} className={isLoadingAI ? "animate-spin" : ""} />
-                         </button>
-                      </div>
-                      <p className="italic text-indigo-100 dark:text-indigo-200/80 text-sm leading-relaxed whitespace-pre-wrap min-h-[60px]">
-                        {isLoadingAI ? "Analisando padrões..." : (aiInsights || "Clique em atualizar para obter novos insights.")}
-                      </p>
-                   </div>
-                   <button onClick={() => setActiveView('reports')} className="relative z-10 mt-8 flex items-center justify-between bg-white/10 hover:bg-white/20 transition-all p-4 rounded-2xl text-xs font-black uppercase text-indigo-300 group/btn">
-                     <span>Relatório Completo</span>
-                     <ArrowRight size={18} className="group-hover/btn:translate-x-1 transition-transform"/>
-                 </button>
                 </div>
               </div>
             </div>
@@ -919,81 +873,81 @@ export default function App() {
           {/* SETTINGS */}
           {activeView === 'settings' && (
             <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in duration-500">
-              <div className="bg-white dark:bg-slate-900 p-10 rounded-[48px] border border-slate-100 dark:border-slate-800 shadow-xl overflow-hidden relative group">
-                 <div className="absolute top-0 right-0 p-10 opacity-5 group-hover:scale-110 transition-transform"><Cloud size={160} className="dark:text-slate-400" /></div>
-                 <div className="relative z-10">
-                    <h3 className="text-3xl font-black text-slate-800 dark:text-slate-100 flex items-center gap-4">
-                       <Cloud className="text-indigo-600 dark:text-indigo-400" size={36}/>
-                       Backups & Sincronização
-                    </h3>
-                    <p className="text-slate-400 dark:text-slate-500 mt-4 text-base leading-relaxed max-w-xl font-medium">Mantenha seus dados seguros na nuvem e acesse de qualquer lugar.</p>
-                    
-                    <div className="mt-10 bg-slate-50 dark:bg-slate-800/50 p-8 rounded-[32px] border border-slate-100 dark:border-slate-800">
-                      {!(apiKey && clientId) ? (
-                        <div className="flex flex-col items-center text-center">
-                          <img src="https://upload.wikimedia.org/wikipedia/commons/d/da/Google_Drive_logo.png" alt="Google Drive" className="w-16 h-16 mb-4"/>
-                          <h4 className="font-black text-slate-800 dark:text-slate-100 text-xl mb-2">Conecte seu Google Drive</h4>
-                          <p className="text-sm text-slate-400 dark:text-slate-500 mb-6 max-w-sm">Para começar, configure suas credenciais da API do Google. Você só precisa fazer isso uma vez.</p>
-                          <button onClick={() => setIsCredentialsModalOpen(true)} className="bg-indigo-600 text-white font-black py-5 px-10 rounded-2xl shadow-lg hover:bg-indigo-700 transition-all active:scale-95 flex items-center gap-3">
-                            <Settings size={20}/> CONFIGURAR CREDENCIAIS
-                          </button>
-                        </div>
-                      ) : !isDriveAuthenticated ? (
-                        <div className="flex flex-col items-center text-center">
-                           <img src="https://upload.wikimedia.org/wikipedia/commons/d/da/Google_Drive_logo.png" alt="Google Drive" className="w-16 h-16 mb-4"/>
-                           <h4 className="font-black text-slate-800 dark:text-slate-100 text-xl mb-2">Conectar ao Google Drive</h4>
-                           <p className="text-sm text-slate-400 dark:text-slate-500 mb-6 max-w-sm">Suas credenciais estão salvas. Autorize o acesso para começar a usar o backup na nuvem.</p>
-                           <div className="flex flex-col items-center gap-4">
-                            <button onClick={handleDriveAuth} className="bg-white text-slate-700 font-black py-5 px-10 rounded-2xl shadow-lg hover:bg-slate-200 transition-all active:scale-95 flex items-center gap-3">
-                              CONECTAR AO GOOGLE
-                            </button>
-                            <button onClick={() => setIsCredentialsModalOpen(true)} className="text-xs text-slate-400 hover:text-indigo-500 transition-colors">Editar credenciais</button>
-                           </div>
-                        </div>
-                      ) : (
-                        <div>
-                          <div className="flex flex-col sm:flex-row justify-between items-center mb-6 bg-emerald-50/50 dark:bg-emerald-900/10 p-4 rounded-2xl border border-emerald-100 dark:border-emerald-900/20">
-                            <div className="flex items-center gap-3">
-                              <img src={driveUser?.getImageUrl()} alt="User" className="w-10 h-10 rounded-full"/>
-                              <div>
-                                <p className="font-bold text-sm text-slate-800 dark:text-slate-200">{driveUser?.getName()}</p>
-                                <p className="text-xs text-slate-400 dark:text-slate-500">{driveUser?.getEmail()}</p>
-                              </div>
+                <div className="bg-white dark:bg-slate-900 p-10 rounded-[48px] border border-slate-100 dark:border-slate-800 shadow-xl overflow-hidden relative group">
+                    <div className="absolute top-0 right-0 p-10 opacity-5 group-hover:scale-110 transition-transform"><Cloud size={160} className="dark:text-slate-400" /></div>
+                    <div className="relative z-10">
+                        <h3 className="text-3xl font-black text-slate-800 dark:text-slate-100 flex items-center gap-4">
+                            <Cloud className="text-indigo-600 dark:text-indigo-400" size={36}/>
+                            Backup na Nuvem
+                        </h3>
+                        <p className="text-slate-400 dark:text-slate-500 mt-4 text-base leading-relaxed max-w-xl font-medium">Conecte sua conta Google para salvar e restaurar seus dados de forma segura no Google Drive.</p>
+                        
+                        <div className="mt-10 bg-slate-50 dark:bg-slate-800/50 p-8 rounded-[32px] border border-slate-100 dark:border-slate-800">
+                        {!clientId ? (
+                           <div className="flex flex-col items-center text-center">
+                              <img src="https://upload.wikimedia.org/wikipedia/commons/d/da/Google_Drive_logo.png" alt="Google Drive" className="w-16 h-16 mb-4"/>
+                              <h4 className="font-black text-slate-800 dark:text-slate-100 text-xl mb-2">Conecte seu Google Drive</h4>
+                              <p className="text-sm text-slate-400 dark:text-slate-500 mb-6 max-w-sm">Para começar, configure suas credenciais da API do Google. Você só precisa fazer isso uma vez.</p>
+                              <button onClick={() => setIsCredentialsModalOpen(true)} className="bg-indigo-600 text-white font-black py-5 px-10 rounded-2xl shadow-lg hover:bg-indigo-700 transition-all active:scale-95 flex items-center gap-3">
+                                <Settings size={20}/> CONFIGURAR CONEXÃO
+                              </button>
                             </div>
-                            <button onClick={handleDriveSignOut} className="mt-3 sm:mt-0 flex items-center gap-2 text-xs font-bold text-rose-500 dark:text-rose-400 bg-rose-50 dark:bg-rose-900/20 px-4 py-2 rounded-lg hover:bg-rose-100 dark:hover:bg-rose-900/40 transition-colors">
-                              <LogOut size={14} /> DESCONECTAR
-                            </button>
-                          </div>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <button onClick={handleExportToDrive} disabled={isDriveLoading} className="bg-indigo-600 dark:bg-indigo-500 text-white font-black py-6 rounded-2xl shadow-lg hover:bg-indigo-700 transition-all active:scale-95 flex items-center justify-center gap-3 disabled:opacity-50">
-                              {isDriveLoading ? <RefreshCw size={24} className="animate-spin"/> : <Upload size={24}/>}
-                              SALVAR NO DRIVE
-                            </button>
-                            <button onClick={handleImportFromDrive} disabled={isDriveLoading} className="bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-black py-6 rounded-2xl hover:bg-slate-50/50 transition-all shadow-sm flex items-center justify-center gap-3 disabled:opacity-50">
-                              {isDriveLoading ? <RefreshCw size={24} className="animate-spin"/> : <Download size={24}/>}
-                              CARREGAR DO DRIVE
-                            </button>
-                          </div>
+                        ) : !isDriveAuthenticated ? (
+                            <div className="flex flex-col items-center text-center">
+                                <img src="https://upload.wikimedia.org/wikipedia/commons/d/da/Google_Drive_logo.png" alt="Google Drive" className="w-16 h-16 mb-4"/>
+                                <h4 className="font-black text-slate-800 dark:text-slate-100 text-xl mb-2">Conectar ao Google Drive</h4>
+                                <p className="text-sm text-slate-400 dark:text-slate-500 mb-6 max-w-sm">Suas credenciais estão salvas. Autorize o acesso para começar a usar o backup na nuvem.</p>
+                                <div className="flex flex-col items-center gap-4">
+                                  <button onClick={handleDriveAuth} disabled={!googleScriptsLoaded} className="bg-white text-slate-700 font-black py-5 px-10 rounded-2xl shadow-lg hover:bg-slate-200 transition-all active:scale-95 flex items-center gap-3 disabled:opacity-50 disabled:cursor-wait">
+                                      {!googleScriptsLoaded && <RefreshCw size={20} className="animate-spin" />} CONECTAR AO GOOGLE
+                                  </button>
+                                  <button onClick={() => setIsCredentialsModalOpen(true)} className="text-xs text-slate-400 hover:text-indigo-500 transition-colors">Editar credenciais</button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div>
+                                <div className="flex flex-col sm:flex-row justify-between items-center mb-6 bg-emerald-50/50 dark:bg-emerald-900/10 p-4 rounded-2xl border border-emerald-100 dark:border-emerald-900/20">
+                                    <div className="flex items-center gap-3">
+                                    <img src={driveUser?.picture} alt="User" className="w-10 h-10 rounded-full"/>
+                                    <div>
+                                        <p className="font-bold text-sm text-slate-800 dark:text-slate-200">{driveUser?.name}</p>
+                                        <p className="text-xs text-slate-400 dark:text-slate-500">{driveUser?.email}</p>
+                                    </div>
+                                    </div>
+                                    <button onClick={handleDriveSignOut} className="mt-3 sm:mt-0 flex items-center gap-2 text-xs font-bold text-rose-500 dark:text-rose-400 bg-rose-50 dark:bg-rose-900/20 px-4 py-2 rounded-lg hover:bg-rose-100 dark:hover:bg-rose-900/40 transition-colors">
+                                    <LogOut size={14} /> DESCONECTAR
+                                    </button>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <button onClick={handleExportToDrive} disabled={isDriveLoading} className="bg-indigo-600 dark:bg-indigo-500 text-white font-black py-6 rounded-2xl shadow-lg hover:bg-indigo-700 transition-all active:scale-95 flex items-center justify-center gap-3 disabled:opacity-50">
+                                    {isDriveLoading ? <RefreshCw size={24} className="animate-spin"/> : <Upload size={24}/>}
+                                    SALVAR NO DRIVE
+                                    </button>
+                                    <button onClick={handleImportFromDrive} disabled={isDriveLoading} className="bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-black py-6 rounded-2xl hover:bg-slate-50/50 transition-all shadow-sm flex items-center justify-center gap-3 disabled:opacity-50">
+                                    {isDriveLoading ? <RefreshCw size={24} className="animate-spin"/> : <Download size={24}/>}
+                                    CARREGAR DO DRIVE
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                         </div>
-                      )}
-                    </div>
 
-                    <div className="mt-12 pt-8 border-t border-slate-100 dark:border-slate-800">
-                      <h4 className="text-center font-black text-slate-400 dark:text-slate-600 uppercase tracking-widest text-xs mb-6">Backup Local</h4>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <button onClick={handleExportLocalBackup} className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-bold py-5 rounded-2xl text-sm flex items-center justify-center gap-3 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
-                          <Download size={18}/> Exportar para Dispositivo
-                        </button>
-                        <label className="cursor-pointer">
-                          <input type="file" className="hidden" accept=".json" onChange={handleImportLocalBackup} />
-                          <div className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-bold py-5 rounded-2xl text-sm flex items-center justify-center gap-3 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
-                            <Upload size={18}/> Importar do Dispositivo
-                          </div>
-                        </label>
-                      </div>
+                        <div className="mt-12 pt-8 border-t border-slate-100 dark:border-slate-800">
+                        <h4 className="text-center font-black text-slate-400 dark:text-slate-600 uppercase tracking-widest text-xs mb-6">Backup Local</h4>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <button onClick={handleExportLocalBackup} className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-bold py-5 rounded-2xl text-sm flex items-center justify-center gap-3 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
+                            <Download size={18}/> Exportar para Dispositivo
+                            </button>
+                            <label className="cursor-pointer">
+                            <input type="file" className="hidden" accept=".json" onChange={handleImportLocalBackup} />
+                            <div className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-bold py-5 rounded-2xl text-sm flex items-center justify-center gap-3 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
+                                <Upload size={18}/> Importar do Dispositivo
+                            </div>
+                            </label>
+                        </div>
+                        </div>
                     </div>
-                 </div>
-              </div>
+                </div>
             </div>
           )}
 
@@ -1269,31 +1223,6 @@ export default function App() {
                         </div>
                      </div>
                   </div>
-                  
-                  <div className="bg-white dark:bg-slate-900 p-10 rounded-[48px] border border-slate-100 dark:border-slate-800 shadow-sm relative group overflow-hidden transition-colors">
-                     <div className="absolute top-0 left-0 w-2 h-full bg-indigo-600"></div>
-                      <div className='flex justify-between items-center mb-8'>
-                         <h3 className="font-black text-slate-800 dark:text-slate-100 text-2xl tracking-tight flex items-center">
-                            <TrendingUp size={28} className="mr-4 text-indigo-600 dark:text-indigo-400"/> 
-                            Análise Gemini Business
-                         </h3>
-                         <button onClick={fetchAIInsights} disabled={isLoadingAI} className="p-3 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 rounded-2xl hover:bg-indigo-100 dark:hover:bg-indigo-800 disabled:opacity-50 transition-all">
-                            <RefreshCw size={20} className={isLoadingAI ? "animate-spin" : ""} />
-                         </button>
-                      </div>
-                     <div className="text-slate-600 dark:text-slate-300 text-base leading-relaxed whitespace-pre-wrap bg-slate-50/50 dark:bg-slate-800/40 p-10 rounded-[32px] italic border border-slate-100 dark:border-slate-800 shadow-inner min-h-[200px] flex items-center justify-center">
-                        {isLoadingAI ? (
-                           <div className="flex flex-col items-center gap-4 text-slate-300 dark:text-slate-700">
-                              <RefreshCw className="animate-spin" size={32}/>
-                              <span className="font-black uppercase tracking-widest text-xs">A Coruja está pensando...</span>
-                           </div>
-                        ) : (
-                           <div className="w-full font-medium">
-                              {aiInsights || "Clique no botão de atualizar para gerar a análise de negócios."}
-                           </div>
-                        )}
-                     </div>
-                  </div>
                </div>
             )}
 
@@ -1301,11 +1230,10 @@ export default function App() {
         </main>
 
         {/* --- MODAIS (Com suporte a Dark Mode) --- */}
-        <CredentialsModal 
+        <GoogleCredentialsModal 
           isOpen={isCredentialsModalOpen}
           onClose={() => setIsCredentialsModalOpen(false)}
           onSave={handleSaveCredentials}
-          currentApiKey={apiKey}
           currentClientId={clientId}
         />
 
@@ -1493,23 +1421,19 @@ export default function App() {
   );
 }
 
-// Separate component for credentials modal to keep main component cleaner
-const CredentialsModal: React.FC<{
+
+const GoogleCredentialsModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
-  onSave: (apiKey: string, clientId: string) => void;
-  currentApiKey: string;
+  onSave: (clientId: string) => void;
   currentClientId: string;
-}> = ({ isOpen, onClose, onSave, currentApiKey, currentClientId }) => {
-  const [apiKey, setApiKey] = useState(currentApiKey);
+}> = ({ isOpen, onClose, onSave, currentClientId }) => {
   const [clientId, setClientId] = useState(currentClientId);
-  const [showApi, setShowApi] = useState(false);
   const [showClient, setShowClient] = useState(false);
 
   useEffect(() => {
-    setApiKey(currentApiKey);
     setClientId(currentClientId);
-  }, [isOpen, currentApiKey, currentClientId]);
+  }, [isOpen, currentClientId]);
 
   if (!isOpen) return null;
 
@@ -1521,26 +1445,11 @@ const CredentialsModal: React.FC<{
            <div className="p-3 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 rounded-2xl"><KeyRound size={32}/></div>
            <div>
               <h3 className="text-3xl font-black text-slate-800 dark:text-slate-100 tracking-tight">Credenciais Google</h3>
-              <p className="text-slate-400 dark:text-slate-500 font-medium mt-1">Insira suas chaves do Google Cloud Platform.</p>
+              <p className="text-slate-400 dark:text-slate-500 font-medium mt-1">Insira seu ID de Cliente para conectar ao Google Drive.</p>
            </div>
         </div>
         
         <div className="space-y-6">
-          <div className="space-y-1">
-            <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest ml-1">Chave de API</label>
-            <div className="relative">
-              <input 
-                type={showApi ? 'text' : 'password'}
-                placeholder="Cole sua Chave de API aqui" 
-                className="w-full p-4 pl-6 pr-12 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-indigo-600 dark:focus:border-indigo-500 dark:text-slate-100 rounded-2xl font-mono text-sm tracking-wider outline-none" 
-                value={apiKey} 
-                onChange={e => setApiKey(e.target.value)} 
-              />
-              <button onClick={() => setShowApi(!showApi)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 dark:text-slate-600">
-                {showApi ? <EyeOff size={20}/> : <Eye size={20}/>}
-              </button>
-            </div>
-          </div>
           <div className="space-y-1">
             <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest ml-1">ID do Cliente OAuth 2.0</label>
             <div className="relative">
@@ -1559,13 +1468,13 @@ const CredentialsModal: React.FC<{
         </div>
 
         <div className="mt-8 pt-8 border-t dark:border-slate-800 text-center">
-            <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer" className="text-indigo-600 dark:text-indigo-400 font-bold text-xs flex items-center justify-center gap-2 mb-6 hover:underline">
+            <a href="https://console.cloud.google.com/apis/credentials/oauthclient" target="_blank" rel="noopener noreferrer" className="text-indigo-600 dark:text-indigo-400 font-bold text-xs flex items-center justify-center gap-2 mb-6 hover:underline">
                Não sabe onde encontrar? Visite o Google Cloud Console <ExternalLink size={14}/>
             </a>
             <button 
-              onClick={() => onSave(apiKey, clientId)} 
+              onClick={() => onSave(clientId)} 
               className="w-full bg-indigo-600 text-white py-6 rounded-3xl font-black shadow-2xl dark:shadow-none hover:bg-indigo-700 transition-all text-lg uppercase disabled:opacity-50"
-              disabled={!apiKey || !clientId}
+              disabled={!clientId}
             >
               SALVAR E CONECTAR
             </button>
