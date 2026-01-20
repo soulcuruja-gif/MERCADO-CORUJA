@@ -1,4 +1,3 @@
-
 import { Product, Category, Expense, Sale, PaymentMethod, ExpenseType, Customer } from './types';
 
 export const INITIAL_PRODUCTS: Product[] = [
@@ -16,9 +15,9 @@ export const INITIAL_EXPENSES: Expense[] = [
 ];
 
 export const INITIAL_CUSTOMERS: Customer[] = [
-  { id: 'c1', name: 'João Silva', phone: '(11) 98765-4321', creditLimit: 500.00, currentDebt: 150.00, totalPaid: 50.00 },
-  { id: 'c2', name: 'Maria Souza', phone: '(11) 91234-5678', creditLimit: 300.00, currentDebt: 0.00, totalPaid: 120.00 },
-  { id: 'c3', name: 'José Oliveira', phone: '(11) 99887-7665', creditLimit: 1000.00, currentDebt: 750.00, totalPaid: 300.00 },
+  { id: 'c1', name: 'João Silva', cpf: '123.456.789-00', phone: '(11) 98765-4321', creditLimit: 500.00, currentDebt: 150.00, totalPaid: 50.00 },
+  { id: 'c2', name: 'Maria Souza', cpf: '987.654.321-11', phone: '(11) 91234-5678', creditLimit: 300.00, currentDebt: 0.00, totalPaid: 120.00 },
+  { id: 'c3', name: 'José Oliveira', cpf: '456.789.123-22', phone: '(11) 99887-7665', creditLimit: 1000.00, currentDebt: 750.00, totalPaid: 300.00 },
 ];
 
 export const INITIAL_SALES: Sale[] = [

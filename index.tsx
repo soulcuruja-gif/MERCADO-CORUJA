@@ -1,16 +1,21 @@
-
 import React from 'react';
-import ReactDOM from 'react-dom/client';
-import App from './App';
+import { createRoot } from 'react-dom/client';
+import App from './App.tsx';
 
 const rootElement = document.getElementById('root');
-if (!rootElement) {
-  throw new Error("Could not find root element to mount to");
+if (rootElement) {
+  const root = createRoot(rootElement);
+  root.render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>
+  );
+  
+  const loader = document.getElementById('loading-screen');
+  if (loader) {
+    setTimeout(() => {
+      loader.style.opacity = '0';
+      setTimeout(() => loader.remove(), 500);
+    }, 1000);
+  }
 }
-
-const root = ReactDOM.createRoot(rootElement);
-root.render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);

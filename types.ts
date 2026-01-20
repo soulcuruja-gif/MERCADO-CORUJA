@@ -1,4 +1,3 @@
-
 export enum Category {
   BEBIDAS = 'Bebidas',
   ALIMENTOS = 'Alimentos',
@@ -47,7 +46,7 @@ export interface Sale {
   totalCost: number;
   profit: number;
   paymentMethod: PaymentMethod;
-  customerId?: string; // Associated customer for "Fiado" payments
+  customerId?: string; 
 }
 
 export interface Expense {
@@ -63,13 +62,14 @@ export interface Expense {
 export interface Customer {
   id: string;
   name: string;
+  cpf: string;
   phone: string;
   creditLimit: number;
   currentDebt: number;
   totalPaid: number;
 }
 
-export type View = 'dashboard' | 'pos' | 'inventory' | 'expenses' | 'reports' | 'customers' | 'sales_history' | 'settings';
+export type View = 'dashboard' | 'pos' | 'inventory' | 'expenses' | 'customers' | 'sales_history' | 'settings';
 
 export interface ScannedProduct {
   name: string;
