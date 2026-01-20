@@ -46,6 +46,7 @@
     "react/": "https://esm.sh/react@^19.2.3/",
     "react": "https://esm.sh/react@^19.2.3",
     "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react-dom/client": "https://esm.sh/react-dom@^19.2.3/client",
     "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
     "@google/genai": "https://esm.sh/@google/genai@^1.37.0"
   }
@@ -55,22 +56,21 @@
   <body class="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors duration-500">
     <div id="root"></div>
 
-    <!-- SCRIPT PARA CARREGAR O APLICATIVO REACT -->
-    <script type="module" src="/index.tsx"></script>
+    <!-- SCRIPT CORRIGIDO: Removida a barra inicial para evitar erros de rota -->
+    <script type="module" src="index.tsx"></script>
 
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js')
+          navigator.serviceWorker.register('sw.js')
             .then(registration => {
-              console.log('ServiceWorker registration successful with scope: ', registration.scope);
-              // Inicia uma verificação por atualizações a cada 5 minutos
+              console.log('ServiceWorker registrado com sucesso');
               setInterval(() => {
                 registration.update();
               }, 1000 * 60 * 5); 
             })
             .catch(err => {
-              console.log('ServiceWorker registration failed: ', err);
+              console.log('Falha ao registrar ServiceWorker: ', err);
             });
         });
       }

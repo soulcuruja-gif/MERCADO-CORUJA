@@ -1,5 +1,4 @@
-
-import { Product, Category, Expense, Sale, PaymentMethod, ExpenseType, Customer } from './types';
+import { Product, Category, Expense, Sale, PaymentMethod, ExpenseType, Customer } from './types.ts';
 
 export const INITIAL_PRODUCTS: Product[] = [
   { id: '1', name: 'Arroz 5kg', category: Category.ALIMENTOS, costPrice: 18.50, salePrice: 24.90, stock: 45, minStock: 10 },
