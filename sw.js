@@ -1,4 +1,4 @@
-const CACHE_NAME = 'coruja-v4';
+const CACHE_NAME = 'coruja-force-update-v5';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
@@ -13,8 +13,6 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  // Estratégia Network-First para tudo durante a fase de ajuste fino
-  event.respondWith(
-    fetch(event.request).catch(() => caches.match(event.request))
-  );
+  // Apenas passa o request para a rede, sem cachear por enquanto para debug
+  event.respondWith(fetch(event.request));
 });
