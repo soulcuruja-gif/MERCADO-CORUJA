@@ -1,146 +1,314 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { 
-  LayoutDashboard, ShoppingCart, Package, Receipt, TrendingUp, Menu, X, Plus,
-  Search, Trash2, AlertTriangle, Camera, RefreshCw, Check, Users, Calendar, 
-  CheckCircle2, UserPlus, HandCoins, Edit2, History, Undo2, Settings, Download, 
-  Upload, PanelLeftClose, PanelLeftOpen, Moon, Sun, Save, FileText, ChevronRight
+  LayoutDashboard, 
+  ShoppingCart, 
+  Package, 
+  Receipt, 
+  TrendingUp, 
+  Menu, 
+  X, 
+  Plus,
+  Search,
+  Trash2,
+  AlertTriangle,
+  Camera,
+  RefreshCw,
+  Check,
+  Percent,
+  Wallet,
+  Smartphone,
+  CreditCard,
+  Banknote,
+  Users,
+  Bell,
+  Calendar,
+  CheckCircle2,
+  Clock,
+  UserPlus,
+  ArrowRight,
+  HandCoins,
+  Filter,
+  ChevronDown,
+  Edit2,
+  History,
+  Undo2,
+  ChevronLeft,
+  CalendarDays,
+  ShieldCheck,
+  Settings,
+  Download,
+  Upload,
+  Cloud,
+  ChevronRight,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Layers,
+  Moon,
+  Sun,
+  LogOut,
+  KeyRound,
+  Fingerprint,
+  Eye,
+  EyeOff,
+  ExternalLink
 } from 'lucide-react';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  BarChart, Bar, Cell 
+  BarChart, Bar, PieChart, Pie, Cell 
 } from 'recharts';
 
-import { 
-  Product, Sale, Expense, View, Category, SaleItem, ScannedProduct, 
-  PaymentMethod, ExpenseType, Customer 
-} from './types';
-import { 
-  INITIAL_PRODUCTS, INITIAL_EXPENSES, INITIAL_SALES, INITIAL_CUSTOMERS 
-} from './constants';
-import { 
-  extractProductsFromMedia, identifyProductFromImage, extractExpenseFromMedia 
-} from './services/geminiService';
+import { Product, Sale, Expense, View, Category, SaleItem, ScannedProduct, PaymentMethod, ExpenseType, Customer } from './types';
+import { INITIAL_PRODUCTS, INITIAL_EXPENSES, INITIAL_SALES, INITIAL_CUSTOMERS } from './constants';
+import { extractProductsFromMedia, identifyProductFromImage, extractExpenseFromMedia } from './services/geminiService';
 
-// --- Sub-componentes ---
+declare global {
+  interface Window {
+    gapi: any;
+    google: any;
+  }
+}
 
-const StatCard: React.FC<{ title: string, value: string, icon: React.ReactNode, color: string }> = ({ 
-  title, value, icon, color 
-}) => (
-  <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-sm flex items-center justify-between">
-    <div>
-      <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest">{title}</p>
-      <h3 className={`text-2xl font-black mt-1 ${color}`}>{value}</h3>
+// --- Sub-components (Helpers) ---
+
+const SidebarItem: React.FC<{ 
+  icon: React.ReactNode, 
+  label: string, 
+  active: boolean, 
+  collapsed: boolean,
+  onClick: () => void 
+}> = ({ icon, label, active, collapsed, onClick }) => (
+  <button
+    onClick={onClick}
+    title={collapsed ? label : ""}
+    className={`w-full flex items-center transition-all duration-300 rounded-xl mb-1 ${
+      collapsed ? 'justify-center px-0 py-3' : 'space-x-3 px-4 py-3'
+    } ${
+      active 
+        ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200 dark:shadow-indigo-900/20' 
+        : 'text-slate-500 dark:text-slate-400 hover:bg-indigo-50 dark:hover:bg-slate-800 hover:text-indigo-600 dark:hover:text-indigo-400'
+    }`}
+  >
+    <div className={`flex-shrink-0 ${active ? 'scale-110' : ''} transition-transform`}>
+      {icon}
     </div>
-    <div className={`p-4 rounded-2xl ${color.replace('text-', 'bg-').replace('-600', '-50')} dark:bg-slate-800 ${color}`}>
+    {!collapsed && (
+      <span className="font-semibold text-sm whitespace-nowrap overflow-hidden transition-all duration-300 animate-in fade-in slide-in-from-left-2">
+        {label}
+      </span>
+    )}
+  </button>
+);
+
+const StatCard: React.FC<{ title: string, value: string, icon: React.ReactNode, trend?: string, trendUp?: boolean }> = ({ 
+  title, value, icon, trend, trendUp 
+}) => (
+  <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800 flex items-start justify-between hover:shadow-md transition-all">
+    <div>
+      <p className="text-slate-400 dark:text-slate-500 text-[11px] font-black uppercase tracking-wider">{title}</p>
+      <h3 className="text-2xl font-black mt-1 text-slate-800 dark:text-slate-100">{value}</h3>
+      {trend && (
+        <span className={`text-[10px] font-bold mt-2 inline-block px-2 py-0.5 rounded-full ${trendUp ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600' : 'bg-rose-50 dark:bg-rose-900/20 text-rose-600'}`}>
+          {trend}
+        </span>
+      )}
+    </div>
+    <div className="p-3 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 rounded-xl">
       {icon}
     </div>
   </div>
 );
 
+// --- Local Storage Keys ---
+const STORAGE_KEYS = {
+  PRODUCTS: 'coruja_products',
+  SALES: 'coruja_sales',
+  EXPENSES: 'coruja_expenses',
+  CUSTOMERS: 'coruja_customers',
+  DARK_MODE: 'coruja_dark_mode',
+  CLIENT_ID: 'coruja_google_client_id',
+};
+
+// --- Main App Component ---
+
 export default function App() {
-  // --- Estados Globais ---
   const [activeView, setActiveView] = useState<View>('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('dark_mode') === 'true');
-
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    return localStorage.getItem(STORAGE_KEYS.DARK_MODE) === 'true';
+  });
+  
+  // --- Data States ---
   const [products, setProducts] = useState<Product[]>(() => {
-    const saved = localStorage.getItem('products');
+    const saved = localStorage.getItem(STORAGE_KEYS.PRODUCTS);
     return saved ? JSON.parse(saved) : INITIAL_PRODUCTS;
   });
 
   const [sales, setSales] = useState<Sale[]>(() => {
-    const saved = localStorage.getItem('sales');
+    const saved = localStorage.getItem(STORAGE_KEYS.SALES);
     return saved ? JSON.parse(saved) : INITIAL_SALES;
   });
 
   const [expenses, setExpenses] = useState<Expense[]>(() => {
-    const saved = localStorage.getItem('expenses');
+    const saved = localStorage.getItem(STORAGE_KEYS.EXPENSES);
     return saved ? JSON.parse(saved) : INITIAL_EXPENSES;
   });
 
   const [customers, setCustomers] = useState<Customer[]>(() => {
-    const saved = localStorage.getItem('customers');
+    const saved = localStorage.getItem(STORAGE_KEYS.CUSTOMERS);
     return saved ? JSON.parse(saved) : INITIAL_CUSTOMERS;
   });
+  
+  // --- Google Drive State ---
+  const [clientId, setClientId] = useState(() => localStorage.getItem(STORAGE_KEYS.CLIENT_ID) || '');
+  const [isDriveAuthenticated, setIsDriveAuthenticated] = useState(false);
+  const [isDriveLoading, setIsDriveLoading] = useState(false);
+  const [driveUser, setDriveUser] = useState<any>(null);
+  const [tokenClient, setTokenClient] = useState<any>(null);
+  const [googleScriptsLoaded, setGoogleScriptsLoaded] = useState(false);
+  const scriptsInitiated = useRef(false);
+  const [isCredentialsModalOpen, setIsCredentialsModalOpen] = useState(false);
+  
+  const GEMINI_API_KEY = process.env.API_KEY || '';
 
-  // --- Estados de Interface ---
+  // --- DARK MODE EFFECT ---
+  useEffect(() => {
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    localStorage.setItem(STORAGE_KEYS.DARK_MODE, String(isDarkMode));
+  }, [isDarkMode]);
+
+  // --- Persistence Sync ---
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products)); }, [products]);
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.SALES, JSON.stringify(sales)); }, [sales]);
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(expenses)); }, [expenses]);
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(customers)); }, [customers]);
+
+  // Filters & Global States
+  const [filterStartDate, setFilterStartDate] = useState(() => {
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
+  });
+  const [filterEndDate, setFilterEndDate] = useState(() => {
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().split('T')[0];
+  });
+  
+  const [defaultMargin, setDefaultMargin] = useState(35);
+  
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const expenseFileInputRef = useRef<HTMLInputElement>(null);
+
+  // Modals & UI States
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanLoading, setScanLoading] = useState(false);
+  const [scannedResults, setScannedResults] = useState<ScannedProduct[]>([]);
+  const [isScanResultsModalOpen, setIsScanResultsModalOpen] = useState(false);
+  const [isExpenseScanning, setIsExpenseScanning] = useState(false);
+  const [expenseScanLoading, setExpenseScanLoading] = useState(false);
+  const [isPOSScanning, setIsPOSScanning] = useState(false);
+  const [posLoading, setPosLoading] = useState(false);
+  const [pendingProduct, setPendingProduct] = useState<Product | null>(null);
+  const [isCheckoutModalOpen, setIsCheckoutModalOpen] = useState(false);
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [isProductModalOpen, setIsProductModalOpen] = useState(false);
+  const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false);
+  const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
+  
+  const [paymentAmount, setPaymentAmount] = useState<string>("");
+  const [selectedCustomerForPayment, setSelectedCustomerForPayment] = useState<Customer | null>(null);
+  const [selectedPayment, setSelectedPayment] = useState<PaymentMethod>(PaymentMethod.DINHEIRO);
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string>("");
+
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
+  const [newProduct, setNewProduct] = useState({ name: '', category: Category.ALIMENTOS, costPrice: 0, salePrice: 0, stock: 0, minStock: 5 });
+  const [newExpense, setNewExpense] = useState({ description: '', amount: 0, dueDate: '', type: ExpenseType.FIXA });
+  const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
+  const [newCustomer, setNewCustomer] = useState({ name: '', phone: '', creditLimit: 0 });
+
   const [cart, setCart] = useState<SaleItem[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [inventorySearch, setInventorySearch] = useState("");
-  const [isCheckoutModalOpen, setIsCheckoutModalOpen] = useState(false);
-  const [selectedPayment, setSelectedPayment] = useState<PaymentMethod>(PaymentMethod.DINHEIRO);
-  const [selectedCustomerId, setSelectedCustomerId] = useState("");
+
+  // --- Handlers ---
+  const handleExportLocalBackup = () => {
+    const data = { products, sales, expenses, customers, version: "2.3", exportDate: new Date().toISOString() };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `backup_coruja_${new Date().toISOString().split('T')[0]}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    alert("Backup local gerado com sucesso!");
+  };
+
+  const handleImportLocalBackup = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !confirm("Importar backup? Todos os dados atuais serão substituídos.")) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = JSON.parse(e.target?.result as string);
+        if (data.products && data.sales) {
+          setProducts(data.products);
+          setSales(data.sales);
+          setExpenses(data.expenses || []);
+          setCustomers(data.customers || []);
+          alert("Sincronização concluída!");
+        }
+      } catch (err) { alert("Erro ao ler o backup."); }
+    };
+    reader.readAsText(file);
+  };
+
+  const stopCamera = () => { if (videoRef.current?.srcObject) (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop()); videoRef.current!.srcObject = null; };
+  const startCamera = async () => { try { const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }); if (videoRef.current) { videoRef.current.srcObject = s; videoRef.current.play(); } } catch (e) { alert("Câmera bloqueada."); } };
   
-  // Modais de Criação/Edição
-  const [isProductModalOpen, setIsProductModalOpen] = useState(false);
-  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
-  const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false);
-  const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
-  const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
-  const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
-
-  // Gemini & OCR
-  const [isScanLoading, setIsScanLoading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // --- Efeitos ---
-  useEffect(() => {
-    localStorage.setItem('products', JSON.stringify(products));
-    localStorage.setItem('sales', JSON.stringify(sales));
-    localStorage.setItem('expenses', JSON.stringify(expenses));
-    localStorage.setItem('customers', JSON.stringify(customers));
-    localStorage.setItem('dark_mode', String(isDarkMode));
-    if (isDarkMode) document.documentElement.classList.add('dark');
-    else document.documentElement.classList.remove('dark');
-  }, [products, sales, expenses, customers, isDarkMode]);
-
-  // --- Lógica de Negócio ---
-
+  // --- Cart Management ---
   const addToCart = (product: Product) => {
-    if (product.stock <= 0) return alert("Produto sem estoque!");
-    setCart(prev => {
-      const existing = prev.find(item => item.productId === product.id);
-      if (existing) {
-        if (existing.quantity >= product.stock) return prev;
-        return prev.map(item => item.productId === product.id ? { ...item, quantity: item.quantity + 1 } : item);
+    setCart(prevCart => {
+      const existingItem = prevCart.find(item => item.productId === product.id);
+      const currentQuantityInCart = existingItem ? existingItem.quantity : 0;
+      if (currentQuantityInCart >= product.stock) {
+        alert("Estoque máximo atingido!");
+        return prevCart;
       }
-      return [...prev, { productId: product.id, name: product.name, quantity: 1, price: product.salePrice, cost: product.costPrice }];
+      if (existingItem) {
+        return prevCart.map(item => item.productId === product.id ? { ...item, quantity: item.quantity + 1 } : item);
+      } else {
+        return [...prevCart, { productId: product.id, name: product.name, quantity: 1, price: product.salePrice, cost: product.costPrice }];
+      }
     });
   };
 
-  const finalizeSale = () => {
-    if (cart.length === 0) return;
-    const total = cart.reduce((acc, i) => acc + (i.price * i.quantity), 0);
-    const totalCost = cart.reduce((acc, i) => acc + (i.cost * i.quantity), 0);
-    
-    if (selectedPayment === PaymentMethod.FIADO) {
-      if (!selectedCustomerId) return alert("Selecione um cliente para fiado.");
-      setCustomers(prev => prev.map(c => c.id === selectedCustomerId ? { ...c, currentDebt: c.currentDebt + total } : c));
+  const increaseCartItem = (productId: string) => {
+    const product = products.find(p => p.id === productId);
+    if (product) {
+      addToCart(product);
     }
-
-    const newSale: Sale = {
-      id: `s${Date.now()}`,
-      date: new Date().toISOString(),
-      items: [...cart],
-      total,
-      totalCost,
-      profit: total - totalCost,
-      paymentMethod: selectedPayment,
-      customerId: selectedPayment === PaymentMethod.FIADO ? selectedCustomerId : undefined
-    };
-
-    setProducts(prev => prev.map(p => {
-      const item = cart.find(ci => ci.productId === p.id);
-      return item ? { ...p, stock: p.stock - item.quantity } : p;
-    }));
-
-    setSales(prev => [newSale, ...prev]);
-    setCart([]);
-    setIsCheckoutModalOpen(false);
-    setSelectedCustomerId("");
+  };
+  
+  const decreaseCartItemQuantity = (productId: string) => {
+    setCart(prev => {
+      const existingItem = prev.find(item => item.productId === productId);
+      if (existingItem?.quantity === 1) {
+        return prev.filter(item => item.productId !== productId);
+      } else if (existingItem) {
+        return prev.map(item => item.productId === productId ? { ...item, quantity: item.quantity - 1 } : item);
+      }
+      return prev;
+    });
   };
 
+  const finalizeSale = () => { if (cart.length === 0) return; const total = cart.reduce((acc, i) => acc + (i.price * i.quantity), 0); if (selectedPayment === PaymentMethod.FIADO) { if (!selectedCustomerId) return alert("Selecione o cliente."); const c = customers.find(cu => cu.id === selectedCustomerId); if (c && c.currentDebt + total > c.creditLimit) return alert("Limite excedido!"); setCustomers(prev => prev.map(cu => cu.id === selectedCustomerId ? { ...cu, currentDebt: Number((cu.currentDebt + total).toFixed(2)) } : cu)); } const newSale = { id: `s${Date.now()}`, date: new Date().toISOString(), items: [...cart], total, totalCost: cart.reduce((acc, i) => acc + (i.cost * i.quantity), 0), profit: total - cart.reduce((acc, i) => acc + (i.cost * i.quantity), 0), paymentMethod: selectedPayment, customerId: selectedPayment === PaymentMethod.FIADO ? selectedCustomerId : undefined }; setProducts(prev => prev.map(p => { const si = cart.find(ci => ci.productId === p.id); return si ? { ...p, stock: p.stock - si.quantity } : p; })); setSales(prev => [newSale, ...prev]); setCart([]); setIsCheckoutModalOpen(false); };
+  
   const refundSale = (saleId: string) => {
     if (!confirm("Deseja realmente estornar esta venda? O estoque será devolvido.")) return;
     const sale = sales.find(s => s.id === saleId);
@@ -158,281 +326,615 @@ export default function App() {
     setSales(prev => prev.filter(s => s.id !== saleId));
   };
 
-  const handleScanNF = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  const capturePOSPhoto = async () => { if (canvasRef.current && videoRef.current) { setPosLoading(true); const ctx = canvasRef.current.getContext('2d'); canvasRef.current.width = videoRef.current.videoWidth; canvasRef.current.height = videoRef.current.videoHeight; ctx?.drawImage(videoRef.current, 0, 0); const base64 = canvasRef.current.toDataURL('image/jpeg').split(',')[1]; try { const product = await identifyProductFromImage(base64, products); if (product) setPendingProduct(product); else alert("Produto não identificado."); } catch (e) { alert("Erro ao identificar."); } finally { setPosLoading(false); } } };
+  const deleteProduct = (id: string) => { if (confirm("Excluir produto?")) setProducts(prev => prev.filter(p => p.id !== id)); };
+  
+  const handleAddOrUpdateExpense = () => { if (!newExpense.description || !newExpense.amount) return alert("Preencha tudo."); const exp = { id: editingExpenseId || `e${Date.now()}`, date: new Date().toISOString(), dueDate: newExpense.dueDate || new Date().toISOString().split('T')[0], description: newExpense.description, amount: newExpense.amount, type: newExpense.type, isPaid: false }; if (editingExpenseId) setExpenses(prev => prev.map(e => e.id === editingExpenseId ? exp : e)); else setExpenses(prev => [...prev, exp]); setNewExpense({ description: '', amount: 0, dueDate: '', type: ExpenseType.FIXA }); setEditingExpenseId(null); setIsExpenseModalOpen(false); };
+  
+  const handleRegisterPayment = () => { if (!selectedCustomerForPayment || !paymentAmount) return; const amount = Number(paymentAmount); setCustomers(prev => prev.map(c => c.id === selectedCustomerForPayment.id ? { ...c, currentDebt: Math.max(0, Number((c.currentDebt - amount).toFixed(2))), totalPaid: Number((c.totalPaid + amount).toFixed(2)) } : c)); setIsPaymentModalOpen(false); setPaymentAmount(""); setSelectedCustomerForPayment(null); };
+  const handleSaveProduct = () => { if (!newProduct.name || !newProduct.salePrice) return alert("Preencha nome e preço."); const p = { id: editingProduct?.id || `p${Date.now()}`, ...newProduct, lastUpdated: new Date().toISOString() }; if (editingProduct) setProducts(prev => prev.map(item => item.id === editingProduct.id ? p : item)); else setProducts(prev => [...prev, p]); setIsProductModalOpen(false); setNewProduct({ name: '', category: Category.ALIMENTOS, costPrice: 0, salePrice: 0, stock: 0, minStock: 5 }); setEditingProduct(null); };
+  
+  const handleFileImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
     if (!file) return;
-    setIsScanLoading(true);
-    try {
-      const reader = new FileReader();
-      reader.onload = async (event) => {
-        const base64 = (event.target?.result as string).split(',')[1];
-        const results = await extractProductsFromMedia(base64, file.type);
-        
-        setProducts(prev => {
-          const updated = [...prev];
-          results.forEach(sp => {
-            const index = updated.findIndex(p => p.name.toLowerCase() === sp.name.toLowerCase());
-            if (index >= 0) {
-              updated[index] = { ...updated[index], stock: updated[index].stock + sp.quantity, costPrice: sp.costPrice };
+
+    setScanLoading(true);
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+        try {
+            const dataUrl = e.target?.result as string;
+            const [header, base64Data] = dataUrl.split(',');
+            const mimeType = header.match(/:(.*?);/)?.[1] || file.type;
+            
+            const results = await extractProductsFromMedia(base64Data, mimeType);
+            if(results.length > 0) {
+                setScannedResults(results);
+                setIsScanResultsModalOpen(true);
             } else {
-              updated.push({
-                id: `p${Date.now()}${Math.random()}`,
-                name: sp.name,
-                category: sp.category || Category.OUTROS,
-                costPrice: sp.costPrice,
-                salePrice: Number((sp.costPrice * 1.35).toFixed(2)),
-                stock: sp.quantity,
-                minStock: 5
-              });
+                alert("Nenhum produto encontrado no arquivo.");
             }
-          });
-          return updated;
-        });
-        alert(`${results.length} produtos processados com sucesso!`);
-      };
-      reader.readAsDataURL(file);
-    } catch (err) {
-      alert("Erro ao ler Nota Fiscal.");
-    } finally {
-      setIsScanLoading(false);
+        } catch (err) {
+            alert("Erro ao processar o arquivo da NF.");
+            console.error(err);
+        } finally {
+            setScanLoading(false);
+            if (fileInputRef.current) fileInputRef.current.value = ""; // Reset file input
+        }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleExpenseFileImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setExpenseScanLoading(true);
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+        try {
+            const dataUrl = e.target?.result as string;
+            const [header, base64Data] = dataUrl.split(',');
+            const mimeType = header.match(/:(.*?);/)?.[1] || file.type;
+
+            const result = await extractExpenseFromMedia(base64Data, mimeType);
+            setNewExpense({ description: result.description, amount: result.amount, dueDate: result.dueDate, type: result.type });
+        } catch (err) {
+            alert("Erro ao processar o arquivo da fatura.");
+            console.error(err);
+        } finally {
+            setExpenseScanLoading(false);
+            if (expenseFileInputRef.current) expenseFileInputRef.current.value = "";
+        }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const capturePhotoNF = async () => { 
+    if (canvasRef.current && videoRef.current) { 
+      setScanLoading(true); 
+      const ctx = canvasRef.current.getContext('2d'); 
+      canvasRef.current.width = videoRef.current.videoWidth; 
+      canvasRef.current.height = videoRef.current.videoHeight; 
+      ctx?.drawImage(videoRef.current, 0, 0); 
+      const base64 = canvasRef.current.toDataURL('image/jpeg').split(',')[1]; 
+      try { 
+        const results = await extractProductsFromMedia(base64, 'image/jpeg'); 
+        setScannedResults(results); 
+        setIsScanResultsModalOpen(true);
+      } catch (e) { 
+        alert("Erro ao ler NF."); 
+      } finally { 
+        setScanLoading(false); 
+        stopCamera();
+        setIsScanning(false);
+      } 
+    } 
+  };
+  
+  const captureExpensePhoto = async () => { 
+    if (canvasRef.current && videoRef.current) { 
+      setExpenseScanLoading(true); 
+      const ctx = canvasRef.current.getContext('2d'); 
+      canvasRef.current.width = videoRef.current.videoWidth; 
+      canvasRef.current.height = videoRef.current.videoHeight; 
+      ctx?.drawImage(videoRef.current, 0, 0); 
+      const base64 = canvasRef.current.toDataURL('image/jpeg').split(',')[1]; 
+      try { 
+        const result = await extractExpenseFromMedia(base64, 'image/jpeg'); 
+        setNewExpense({ description: result.description, amount: result.amount, dueDate: result.dueDate, type: result.type }); 
+        stopCamera(); 
+        setIsExpenseScanning(false); 
+      } catch (e) { 
+        alert("Erro ao ler fatura."); 
+      } finally { 
+        setExpenseScanLoading(false); 
+      } 
+    } 
+  };
+  
+  const confirmImport = () => { 
+    setProducts(prev => { 
+      const updated = [...prev]; 
+      scannedResults.forEach(sp => { 
+        const idx = updated.findIndex(p => p.name.toLowerCase() === sp.name.toLowerCase()); 
+        if (idx >= 0) {
+          updated[idx] = { ...updated[idx], stock: updated[idx].stock + sp.quantity, costPrice: sp.costPrice, lastUpdated: new Date().toISOString() }; 
+        } else {
+          updated.push({ id: `p${Date.now()}-${Math.random().toString(36).substr(2, 5)}`, name: sp.name, category: sp.category || Category.OUTROS, costPrice: sp.costPrice, salePrice: Number((sp.costPrice * (1 + (defaultMargin / 100))).toFixed(2)), stock: sp.quantity, minStock: 5, lastUpdated: new Date().toISOString() }); 
+        }
+      }); 
+      return updated; 
+    }); 
+    setIsScanResultsModalOpen(false);
+    setScannedResults([]); 
+  };
+  
+  const handleSaveCustomer = () => { 
+    if (!newCustomer.name) return alert("Nome obrigatório.");
+    
+    if (editingCustomer) {
+        setCustomers(prev => prev.map(c => 
+            c.id === editingCustomer.id 
+            ? { ...c, name: newCustomer.name, phone: newCustomer.phone, creditLimit: newCustomer.creditLimit } 
+            : c
+        ));
+    } else {
+        const c = { id: `c${Date.now()}`, ...newCustomer, currentDebt: 0, totalPaid: 0 }; 
+        setCustomers(prev => [...prev, c]); 
+    }
+    
+    setIsCustomerModalOpen(false); 
+    setNewCustomer({ name: '', phone: '', creditLimit: 0 }); 
+    setEditingCustomer(null);
+  };
+  
+  const handleDeleteCustomer = (id: string) => {
+    if (confirm("Tem certeza que deseja excluir este cliente? O histórico de fiado será perdido permanentemente.")) {
+        setCustomers(prev => prev.filter(c => c.id !== id));
     }
   };
 
-  // --- Cálculos Dashboard ---
-  const stats = useMemo(() => {
-    const totalVendido = sales.reduce((acc, s) => acc + s.total, 0);
-    const lucro = sales.reduce((acc, s) => acc + s.profit, 0);
-    const pendenteFiado = customers.reduce((acc, c) => acc + c.currentDebt, 0);
-    const estoqueBaixo = products.filter(p => p.stock <= p.minStock).length;
-    return { totalVendido, lucro, pendenteFiado, estoqueBaixo };
-  }, [sales, customers, products]);
+  // Statistics Calculation
+  const filteredSales = useMemo(() => {
+    const start = new Date(filterStartDate + 'T00:00:00');
+    const end = new Date(filterEndDate + 'T23:59:59');
+    return sales.filter(s => { const d = new Date(s.date); return d >= start && d <= end; });
+  }, [sales, filterStartDate, filterEndDate]);
 
   const chartData = useMemo(() => {
-    const last7Days = Array.from({length: 7}, (_, i) => {
-      const d = new Date(); d.setDate(d.getDate() - (6 - i));
-      return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+    const dailyData: { [key: string]: number } = {};
+    filteredSales.forEach(sale => {
+      const date = new Date(sale.date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+      dailyData[date] = (dailyData[date] || 0) + sale.total;
     });
-    return last7Days.map(date => ({
-      date,
-      amount: sales.filter(s => new Date(s.date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) === date).reduce((acc, s) => acc + s.total, 0)
-    }));
+    return Object.entries(dailyData).map(([date, amount]) => ({ date, amount })).sort((a,b) => a.date.localeCompare(b.date));
+  }, [filteredSales]);
+
+  const totalSales = filteredSales.reduce((acc, s) => acc + s.total, 0);
+  const pendingExpenses = expenses.filter(e => !e.isPaid).reduce((acc, e) => acc + e.amount, 0);
+  const totalOutstandingDebt = customers.reduce((acc, c) => acc + c.currentDebt, 0);
+  const dailySales = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0];
+    return sales
+        .filter(s => s.date.startsWith(today))
+        .reduce((acc, s) => acc + s.total, 0);
   }, [sales]);
 
-  // --- Renderização de Views ---
+  // --- Google Drive Integration ---
+  const initializeGoogleClients = useCallback((currentClientId: string) => {
+    if (scriptsInitiated.current || !currentClientId) return;
+    scriptsInitiated.current = true;
+  
+    const gapiScript = document.createElement('script');
+    gapiScript.src = "https://apis.google.com/js/api.js";
+    gapiScript.async = true;
+    gapiScript.defer = true;
+  
+    const gisScript = document.createElement('script');
+    gisScript.src = "https://accounts.google.com/gsi/client";
+    gisScript.async = true;
+    gisScript.defer = true;
+  
+    const handleGisLoad = () => {
+      try {
+        const client = window.google.accounts.oauth2.initTokenClient({
+          client_id: currentClientId,
+          scope: 'https://www.googleapis.com/auth/drive.file',
+          callback: (tokenResponse: any) => {
+            if (tokenResponse && tokenResponse.access_token) {
+              window.gapi.client.setToken(tokenResponse);
+              setIsDriveAuthenticated(true);
+              window.gapi.client.load('drive', 'v3').then(() => {
+                console.log("GAPI client for Drive loaded.");
+              });
+              fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                headers: { 'Authorization': `Bearer ${tokenResponse.access_token}` }
+              })
+              .then(res => res.json())
+              .then(data => setDriveUser(data))
+              .catch(err => console.error("Error fetching user info:", err));
+            }
+          },
+        });
+        setTokenClient(client);
+        setGoogleScriptsLoaded(true);
+      } catch (error) {
+        console.error("Error initializing GIS client:", error);
+      }
+    };
+  
+    const handleGapiLoad = () => {
+      window.gapi.load('client:picker', () => {
+        gisScript.onload = handleGisLoad;
+        document.body.appendChild(gisScript);
+      });
+    };
+  
+    gapiScript.onload = handleGapiLoad;
+    document.body.appendChild(gapiScript);
+  }, []);
+
+  useEffect(() => {
+    if (clientId) {
+      initializeGoogleClients(clientId);
+    }
+  }, [clientId, initializeGoogleClients]);
+
+  const handleSaveCredentials = (newClientId: string) => {
+    localStorage.setItem(STORAGE_KEYS.CLIENT_ID, newClientId);
+    setClientId(newClientId);
+    setIsCredentialsModalOpen(false);
+    scriptsInitiated.current = false;
+    setGoogleScriptsLoaded(false);
+  };
+
+  const handleDriveAuth = () => {
+    if (tokenClient) {
+      tokenClient.requestAccessToken({ prompt: 'consent' });
+    } else if (!clientId) {
+       alert("Por favor, configure o 'Client ID' do Google na aba 'Ajustes'.");
+    } else {
+       alert("Aguarde o carregamento do Google Drive...");
+    }
+  };
+  
+  const handleDriveSignOut = () => {
+    const token = window.gapi.client.getToken();
+    if (token && token.access_token) {
+      window.google.accounts.oauth2.revoke(token.access_token, () => {
+        window.gapi.client.setToken(null);
+        setIsDriveAuthenticated(false);
+        setDriveUser(null);
+      });
+    }
+  };
+
+  const handleExportToDrive = async () => {
+    if (!isDriveAuthenticated) return alert("Conecte-se ao Google Drive primeiro.");
+    setIsDriveLoading(true);
+    const dataToBackup = { products, sales, expenses, customers, version: "2.4-drive", exportDate: new Date().toISOString() };
+    const fileContent = JSON.stringify(dataToBackup, null, 2);
+    const fileName = `backup_coruja_${new Date().toISOString().split('T')[0]}.json`;
+    const boundary = '-------314159265358979323846';
+    const delimiter = `\r\n--${boundary}\r\n`;
+    const close_delim = `\r\n--${boundary}--`;
+    const metadata = { name: fileName, mimeType: 'application/json' };
+    const multipartRequestBody =
+      delimiter + 'Content-Type: application/json\r\n\r\n' + JSON.stringify(metadata) +
+      delimiter + 'Content-Type: application/json\r\n\r\n' + fileContent + close_delim;
+
+    try {
+      await window.gapi.client.request({
+        path: '/upload/drive/v3/files', method: 'POST', params: { uploadType: 'multipart' },
+        headers: { 'Content-Type': `multipart/related; boundary="${boundary}"` }, body: multipartRequestBody,
+      });
+      alert("Backup salvo no Google Drive!");
+    } catch (error) {
+      alert("Erro ao salvar no Google Drive.");
+    } finally {
+      setIsDriveLoading(false);
+    }
+  };
+
+  const pickerCallback = useCallback(async (data: any) => {
+    if (data.action === window.google.picker.Action.PICKED) {
+      const fileId = data.docs[0].id;
+      setIsDriveLoading(true);
+      try {
+        if (!confirm("Importar backup? Dados atuais serão substituídos.")) {
+          setIsDriveLoading(false);
+          return;
+        }
+        const response = await window.gapi.client.drive.files.get({ fileId, alt: 'media' });
+        const fileData = JSON.parse(response.body);
+        
+        if (fileData.products && fileData.sales) {
+          setProducts(fileData.products);
+          setSales(fileData.sales);
+          setExpenses(fileData.expenses || []);
+          setCustomers(fileData.customers || []);
+          alert("Backup restaurado!");
+        } else {
+          throw new Error("Formato inválido.");
+        }
+      } catch (error) {
+        alert("Erro ao carregar do Drive.");
+      } finally {
+        setIsDriveLoading(false);
+      }
+    }
+  }, [setProducts, setSales, setExpenses, setCustomers]);
+
+  const handleImportFromDrive = () => {
+    if (!isDriveAuthenticated) {
+      handleDriveAuth();
+      return;
+    }
+    const token = window.gapi.client.getToken();
+    if (!token || !token.access_token) {
+        handleDriveAuth();
+        return;
+    }
+    if (!window.google || !window.google.picker) return;
+
+    const view = new window.google.picker.View(window.google.picker.ViewId.DOCS);
+    view.setMimeTypes("application/json");
+
+    const picker = new window.google.picker.PickerBuilder()
+      .addView(view)
+      .setOAuthToken(token.access_token)
+      .setDeveloperKey(GEMINI_API_KEY)
+      .setCallback(pickerCallback)
+      .build();
+    picker.setVisible(true);
+  };
 
   return (
-    <div className="flex min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans">
-      {/* Sidebar */}
-      <aside className={`fixed inset-y-0 left-0 z-50 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 transition-all duration-300 ${isSidebarOpen ? 'translate-x-0 w-64' : '-translate-x-full lg:translate-x-0'} ${isSidebarCollapsed ? 'lg:w-20' : 'lg:w-64'}`}>
-        <div className="p-6 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-             <div className="bg-indigo-600 p-2 rounded-xl text-white shadow-lg"><LayoutDashboard size={20}/></div>
-             {!isSidebarCollapsed && <h1 className="text-xl font-black">Coruja POS</h1>}
+    <div className="flex min-h-screen bg-slate-50 dark:bg-slate-950 transition-all duration-500 overflow-x-hidden text-slate-900 dark:text-slate-100">
+      {isSidebarOpen && <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-40 lg:hidden" onClick={() => setIsSidebarOpen(false)} />}
+
+      <aside 
+        className={`fixed inset-y-0 left-0 z-50 bg-white dark:bg-slate-900 border-r border-slate-100 dark:border-slate-800 transform transition-all duration-300 ease-in-out shadow-xl lg:shadow-none flex flex-col ${
+          isSidebarOpen ? 'translate-x-0 w-64' : 'lg:translate-x-0 -translate-x-full'
+        } ${isSidebarCollapsed ? 'lg:w-20' : 'lg:w-64'}`}
+      >
+        <div className={`p-6 flex items-center transition-all ${isSidebarCollapsed ? 'justify-center px-0' : 'justify-between'}`}>
+          <div className="flex items-center space-x-2">
+            <div className="bg-indigo-600 p-1.5 rounded-xl text-white shadow-lg shadow-indigo-100 dark:shadow-indigo-900/20 shrink-0 flex items-center justify-center">
+              <img src="https://cdn-icons-png.flaticon.com/512/952/952763.png" alt="Coruja Logo" className="w-6 h-6" />
+            </div>
+            {!isSidebarCollapsed && (
+              <h1 className="text-xl font-black text-slate-800 dark:text-slate-100 tracking-tight whitespace-nowrap overflow-hidden animate-in fade-in">
+                Coruja <span className="text-indigo-600 dark:text-indigo-400">POS</span>
+              </h1>
+            )}
           </div>
-          <button onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)} className="hidden lg:block text-slate-400 hover:text-indigo-600"><PanelLeftClose size={20}/></button>
+          {!isSidebarCollapsed && (
+            <button onClick={() => setIsSidebarOpen(false)} className="lg:hidden text-slate-400 p-2"><X size={24} /></button>
+          )}
         </div>
-        
-        <nav className="px-3 space-y-1">
-          {[
-            { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-            { id: 'pos', icon: ShoppingCart, label: 'PDV / Vender' },
-            { id: 'sales_history', icon: History, label: 'Vendas Feitas' },
-            { id: 'inventory', icon: Package, label: 'Estoque' },
-            { id: 'expenses', icon: Receipt, label: 'Despesas' },
-            { id: 'customers', icon: Users, label: 'Fiado' },
-            { id: 'settings', icon: Settings, label: 'Ajustes' }
-          ].map((item) => (
-            <button 
-              key={item.id}
-              onClick={() => { setActiveView(item.id as View); setIsSidebarOpen(false); }}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeView === item.id ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200 dark:shadow-indigo-900/20' : 'text-slate-500 hover:bg-indigo-50 dark:hover:bg-slate-800'}`}
-            >
-              <item.icon size={20} />
-              {!isSidebarCollapsed && <span className="font-bold text-sm">{item.label}</span>}
-            </button>
-          ))}
+
+        <nav className="flex-1 px-3 space-y-1 overflow-y-auto">
+          <SidebarItem icon={<LayoutDashboard size={20} />} label="Dashboard" active={activeView === 'dashboard'} collapsed={isSidebarCollapsed} onClick={() => { setActiveView('dashboard'); setIsSidebarOpen(false); }} />
+          <SidebarItem icon={<ShoppingCart size={20} />} label="Vender (PDV)" active={activeView === 'pos'} collapsed={isSidebarCollapsed} onClick={() => { setActiveView('pos'); setIsSidebarOpen(false); }} />
+          <SidebarItem icon={<Package size={20} />} label="Estoque" active={activeView === 'inventory'} collapsed={isSidebarCollapsed} onClick={() => { setActiveView('inventory'); setIsSidebarOpen(false); }} />
+          <SidebarItem icon={<Receipt size={20} />} label="Despesas" active={activeView === 'expenses'} collapsed={isSidebarCollapsed} onClick={() => { setActiveView('expenses'); setIsSidebarOpen(false); }} />
+          <SidebarItem icon={<Users size={20} />} label="Clientes/Fiado" active={activeView === 'customers'} collapsed={isSidebarCollapsed} onClick={() => { setActiveView('customers'); setIsSidebarOpen(false); }} />
+          <SidebarItem icon={<Settings size={20} />} label="Ajustes" active={activeView === 'settings'} collapsed={isSidebarCollapsed} onClick={() => { setActiveView('settings'); setIsSidebarOpen(false); }} />
         </nav>
 
-        <div className="absolute bottom-0 w-full p-4 border-t dark:border-slate-800 space-y-2">
-           <button onClick={() => setIsDarkMode(!isDarkMode)} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all">
-              {isDarkMode ? <Sun size={20} className="text-amber-500"/> : <Moon size={20}/>}
-              {!isSidebarCollapsed && <span className="font-bold text-sm">{isDarkMode ? 'Claro' : 'Escuro'}</span>}
+        <div className="p-4 mt-auto border-t border-slate-100 dark:border-slate-800 space-y-2">
+           <button 
+              onClick={() => setIsDarkMode(!isDarkMode)}
+              className={`w-full flex items-center transition-all duration-300 rounded-xl p-3 ${
+                isSidebarCollapsed ? 'justify-center' : 'space-x-3'
+              } text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800`}
+              title={isDarkMode ? "Ativar Modo Claro" : "Ativar Modo Noturno"}
+           >
+              {isDarkMode ? <Sun size={20} className="text-amber-400" /> : <Moon size={20} className="text-slate-400" />}
+              {!isSidebarCollapsed && <span className="text-sm font-bold">{isDarkMode ? 'Modo Claro' : 'Modo Noturno'}</span>}
+           </button>
+
+           <button 
+             onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+             className={`hidden lg:flex items-center transition-all duration-300 rounded-xl p-3 w-full ${
+               isSidebarCollapsed ? 'justify-center' : 'space-x-3'
+             } text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400`}
+           >
+             {isSidebarCollapsed ? <PanelLeftOpen size={24}/> : <><PanelLeftClose size={20}/> <span className="text-sm font-bold">Recolher</span></>}
            </button>
         </div>
       </aside>
 
-      {/* Main Content */}
-      <main className={`flex-1 transition-all duration-300 ${isSidebarCollapsed ? 'lg:ml-20' : 'lg:ml-64'}`}>
-        <header className="h-16 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md flex items-center justify-between px-8 sticky top-0 z-30">
-          <div className="flex items-center gap-4">
-             <button onClick={() => setIsSidebarOpen(true)} className="lg:hidden p-2 bg-slate-100 dark:bg-slate-800 rounded-lg"><Menu size={20}/></button>
-             <h2 className="text-lg font-black capitalize tracking-tight">{activeView.replace('_', ' ')}</h2>
+      <main 
+        className={`flex-1 transition-all duration-300 ease-in-out min-h-screen ${
+          isSidebarCollapsed ? 'lg:ml-20' : 'lg:ml-64'
+        }`}
+      >
+        <header className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md h-16 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between px-4 md:px-8 sticky top-0 z-30 transition-colors">
+          <div className="flex items-center space-x-4">
+            <button onClick={() => setIsSidebarOpen(true)} className="lg:hidden p-2 bg-slate-100 dark:bg-slate-800 rounded-xl text-slate-600 dark:text-slate-400"><Menu size={20}/></button>
+            <h2 className="text-sm md:text-lg font-black text-slate-700 dark:text-slate-200 capitalize tracking-tight">
+              {activeView}
+            </h2>
           </div>
-          <div className="flex items-center gap-6">
-             <div className="hidden sm:flex flex-col items-end">
-                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Lucro Total</span>
-                <span className="text-sm font-black text-emerald-600">R$ {stats.lucro.toFixed(2)}</span>
-             </div>
-             <div className="w-10 h-10 bg-indigo-100 dark:bg-indigo-900/30 rounded-full flex items-center justify-center text-indigo-600 font-black">C</div>
+          <div className="flex items-center space-x-4">
+            <div className="hidden sm:flex flex-col items-end">
+              <span className="text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">Saldo do Dia</span>
+              <span className="text-sm font-black text-emerald-600 dark:text-emerald-500">R$ {dailySales.toFixed(2)}</span>
+            </div>
+            <div className="w-10 h-10 bg-slate-100 dark:bg-slate-800 rounded-full border-2 border-white dark:border-slate-700 shadow-sm overflow-hidden flex items-center justify-center">
+               <img src="https://cdn-icons-png.flaticon.com/512/952/952763.png" alt="Logo" className="w-6 h-6 object-contain" />
+            </div>
           </div>
         </header>
 
-        <div className="p-8">
-          {/* Dashboard */}
+        <div className="p-4 md:p-8 pb-32 lg:pb-8 max-w-[1600px] mx-auto transition-all">
+          
+          {/* DASHBOARD */}
           {activeView === 'dashboard' && (
-            <div className="space-y-8 animate-in fade-in duration-500">
-               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                  <StatCard title="Vendas Totais" value={`R$ ${stats.totalVendido.toFixed(2)}`} icon={<TrendingUp size={24}/>} color="text-indigo-600" />
-                  <StatCard title="Fiados Pendentes" value={`R$ ${stats.pendenteFiado.toFixed(2)}`} icon={<Users size={24}/>} color="text-amber-600" />
-                  <StatCard title="Lucro Bruto" value={`R$ ${stats.lucro.toFixed(2)}`} icon={<TrendingUp size={24}/>} color="text-emerald-600" />
-                  <StatCard title="Estoque Crítico" value={`${stats.estoqueBaixo} itens`} icon={<Package size={24}/>} color="text-rose-600" />
-               </div>
-
-               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                  <div className="lg:col-span-2 bg-white dark:bg-slate-900 p-8 rounded-[32px] border border-slate-100 dark:border-slate-800 h-[400px]">
-                     <h3 className="font-black text-slate-400 text-[11px] uppercase tracking-widest mb-8">Vendas dos Últimos 7 Dias</h3>
-                     <ResponsiveContainer width="100%" height="80%">
-                        <LineChart data={chartData}>
-                           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDarkMode ? "#1e293b" : "#f1f5f9"} />
-                           <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{fontSize: 12, fill: '#94a3b8'}} />
-                           <YAxis axisLine={false} tickLine={false} tick={{fontSize: 12, fill: '#94a3b8'}} />
-                           <Tooltip contentStyle={{borderRadius: '16px', border: 'none', backgroundColor: isDarkMode ? '#0f172a' : '#fff'}} />
-                           <Line type="monotone" dataKey="amount" stroke="#4f46e5" strokeWidth={4} dot={{r: 6, fill: '#4f46e5'}} />
-                        </LineChart>
-                     </ResponsiveContainer>
-                  </div>
-                  <div className="bg-indigo-600 p-8 rounded-[32px] text-white flex flex-col justify-between">
-                     <div>
-                        <h4 className="text-2xl font-black mb-2">Meta de Vendas</h4>
-                        <p className="text-indigo-200 text-sm">Você atingiu 65% da sua meta mensal!</p>
-                     </div>
-                     <div className="space-y-4">
-                        <div className="h-4 bg-indigo-500 rounded-full overflow-hidden">
-                           <div className="h-full bg-white w-[65%]"></div>
-                        </div>
-                        <p className="text-right font-black">R$ 32.500 / R$ 50.000</p>
-                     </div>
-                  </div>
-               </div>
-            </div>
-          )}
-
-          {/* POS (Vender) */}
-          {activeView === 'pos' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in slide-in-from-right-4 duration-500">
-               <div className="lg:col-span-2 space-y-6">
-                  <div className="relative group">
-                    <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-indigo-600 transition-colors" size={24}/>
-                    <input 
-                      type="text" 
-                      placeholder="Pesquisar produto pelo nome..." 
-                      className="w-full pl-14 pr-6 py-5 bg-white dark:bg-slate-900 border-2 border-transparent focus:border-indigo-600 rounded-2xl outline-none shadow-sm font-bold transition-all"
-                      value={searchTerm}
-                      onChange={e => setSearchTerm(e.target.value)}
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
-                    {products.filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase())).map(product => (
-                      <button 
-                        key={product.id} 
-                        onClick={() => addToCart(product)} 
-                        className={`bg-white dark:bg-slate-900 p-5 rounded-[28px] border-2 border-transparent hover:border-indigo-600 transition-all text-left shadow-sm group relative overflow-hidden ${product.stock <= 0 ? 'opacity-50 grayscale' : ''}`}
-                      >
-                         <h4 className="font-bold text-sm truncate">{product.name}</h4>
-                         <p className="text-2xl font-black mt-3 text-indigo-600">R$ {product.salePrice.toFixed(2)}</p>
-                         <span className={`text-[10px] font-black uppercase tracking-widest mt-2 block ${product.stock <= product.minStock ? 'text-rose-500' : 'text-slate-400'}`}>Estoque: {product.stock}</span>
-                         <div className="absolute -right-2 -bottom-2 bg-indigo-50 dark:bg-indigo-900/30 p-4 rounded-tl-[24px] opacity-0 group-hover:opacity-100 transition-all text-indigo-600"><Plus size={20}/></div>
-                      </button>
-                    ))}
-                  </div>
-               </div>
-
-               <div className="bg-white dark:bg-slate-900 rounded-[40px] shadow-xl border border-slate-100 dark:border-slate-800 flex flex-col h-[70vh] lg:h-[calc(100vh-12rem)] sticky top-24">
-                  <div className="p-8 border-b dark:border-slate-800 flex justify-between items-center">
-                     <h3 className="font-black text-slate-400 text-[11px] uppercase tracking-widest">Carrinho</h3>
-                     <button onClick={() => setCart([])} className="text-[10px] font-black text-rose-500 uppercase">Limpar</button>
-                  </div>
-                  <div className="flex-1 overflow-y-auto p-6 space-y-4">
-                    {cart.length === 0 && <div className="text-center py-20 text-slate-300 font-black opacity-50"><ShoppingCart size={60} className="mx-auto mb-4"/> Vazio</div>}
-                    {cart.map(item => (
-                      <div key={item.productId} className="flex justify-between items-center bg-slate-50 dark:bg-slate-800 p-4 rounded-2xl">
-                         <div className="flex-1 min-w-0 pr-3">
-                            <p className="font-black text-sm truncate">{item.name}</p>
-                            <p className="text-xs text-slate-400 font-bold">R$ {item.price.toFixed(2)} x {item.quantity}</p>
-                         </div>
-                         <p className="font-black text-indigo-600">R$ {(item.price * item.quantity).toFixed(2)}</p>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="p-8 border-t dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50">
-                     <div className="flex justify-between items-end mb-6">
-                        <span className="text-[11px] font-black text-slate-400 uppercase">Total Geral</span>
-                        <span className="text-4xl font-black text-indigo-600">R$ {cart.reduce((acc, i) => acc + (i.price * i.quantity), 0).toFixed(2)}</span>
-                     </div>
-                     <button 
-                        onClick={() => setIsCheckoutModalOpen(true)} 
-                        disabled={cart.length === 0}
-                        className="w-full bg-indigo-600 text-white py-5 rounded-2xl font-black shadow-lg shadow-indigo-200 dark:shadow-none hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50"
-                      >
-                        CONCLUIR VENDA
-                      </button>
-                  </div>
-               </div>
-            </div>
-          )}
-
-          {/* Vendas Feitas */}
-          {activeView === 'sales_history' && (
             <div className="space-y-6 animate-in fade-in duration-500">
-               <h3 className="text-3xl font-black tracking-tight">Histórico de Transações</h3>
-               <div className="bg-white dark:bg-slate-900 rounded-[32px] border border-slate-100 dark:border-slate-800 overflow-hidden shadow-sm">
-                  <table className="w-full text-left">
-                    <thead className="bg-slate-50 dark:bg-slate-800 border-b dark:border-slate-700">
-                       <tr>
-                          <th className="px-6 py-5 text-[11px] font-black uppercase text-slate-400 tracking-widest">Data / Hora</th>
-                          <th className="px-6 py-5 text-[11px] font-black uppercase text-slate-400 tracking-widest">Itens</th>
-                          <th className="px-6 py-5 text-[11px] font-black uppercase text-slate-400 tracking-widest">Pagamento</th>
-                          <th className="px-6 py-5 text-[11px] font-black uppercase text-slate-400 tracking-widest">Total</th>
-                          <th className="px-6 py-5"></th>
-                       </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                       {sales.map(s => (
-                         <tr key={s.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/50 transition-colors group">
-                           <td className="px-6 py-5">
-                             <p className="font-bold text-sm">{new Date(s.date).toLocaleDateString('pt-BR')}</p>
-                             <p className="text-xs text-slate-400">{new Date(s.date).toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})}</p>
-                           </td>
-                           <td className="px-6 py-5 text-sm text-slate-500">
-                             {s.items.length} itens (venda {s.id.slice(-4)})
-                           </td>
-                           <td className="px-6 py-5">
-                             <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${s.paymentMethod === PaymentMethod.FIADO ? 'bg-amber-100 text-amber-700' : 'bg-indigo-100 text-indigo-700'}`}>
-                                {s.paymentMethod}
-                             </span>
-                           </td>
-                           <td className="px-6 py-5 font-black text-indigo-600">R$ {s.total.toFixed(2)}</td>
-                           <td className="px-6 py-5 text-right opacity-0 group-hover:opacity-100 transition-opacity">
-                             <button onClick={() => refundSale(s.id)} className="p-3 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-xl transition-all"><Undo2 size={18}/></button>
-                           </td>
-                         </tr>
-                       ))}
-                    </tbody>
-                  </table>
-               </div>
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                  <h3 className="text-2xl font-black tracking-tight text-slate-800 dark:text-slate-100">Visão Geral</h3>
+                  <div className="flex gap-4 items-center bg-white dark:bg-slate-900 p-2 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm">
+                    <div className="flex items-center gap-2 px-2">
+                        <Calendar size={16} className="text-indigo-500"/>
+                        <span className="text-xs font-bold text-slate-400 uppercase">De</span>
+                        <input type="date" value={filterStartDate} onChange={e => setFilterStartDate(e.target.value)} className="bg-transparent font-bold text-sm outline-none text-slate-700 dark:text-slate-300"/>
+                    </div>
+                    <div className="w-px h-6 bg-slate-100 dark:bg-slate-800"></div>
+                    <div className="flex items-center gap-2 px-2">
+                        <span className="text-xs font-bold text-slate-400 uppercase">Até</span>
+                        <input type="date" value={filterEndDate} onChange={e => setFilterEndDate(e.target.value)} className="bg-transparent font-bold text-sm outline-none text-slate-700 dark:text-slate-300"/>
+                    </div>
+                  </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+                <StatCard title="Faturamento (Período)" value={`R$ ${totalSales.toFixed(2)}`} icon={<TrendingUp size={24} />} trend={`${filteredSales.length} vendas`} trendUp={true} />
+                <StatCard title="Fiados Pendentes" value={`R$ ${totalOutstandingDebt.toFixed(2)}`} icon={<Users size={24} />} trend="Pendente" />
+                <StatCard title="Contas a Pagar" value={`R$ ${pendingExpenses.toFixed(2)}`} icon={<Receipt size={24} />} trend="Vencendo" />
+                <StatCard title="Ticket Médio" value={`R$ ${(totalSales / (filteredSales.length || 1)).toFixed(2)}`} icon={<HandCoins size={24} />} trendUp={true} />
+              </div>
+
+              <div className="bg-white dark:bg-slate-900 p-6 md:p-8 rounded-[32px] border border-slate-100 dark:border-slate-800 shadow-sm h-[350px]">
+                  <h3 className="font-black text-slate-800 dark:text-slate-100 text-lg uppercase tracking-tight mb-6">Tendência de Vendas</h3>
+                  <ResponsiveContainer width="100%" height="80%">
+                    <LineChart data={chartData}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDarkMode ? "#1e293b" : "#f1f5f9"} />
+                      <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{fontSize: 10, fill: isDarkMode ? '#64748b' : '#94a3b8'}} />
+                      <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fill: isDarkMode ? '#64748b' : '#94a3b8'}} />
+                      <Tooltip contentStyle={{ borderRadius: '16px', border: 'none', backgroundColor: isDarkMode ? '#0f172a' : '#fff', color: isDarkMode ? '#f8fafc' : '#0f172a' }} formatter={(v: number) => `R$ ${v.toFixed(2)}`} />
+                      <Line type="monotone" dataKey="amount" stroke="#4f46e5" strokeWidth={4} dot={{ r: 6, fill: '#4f46e5' }} activeDot={{ r: 8 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
+              </div>
+
+              <div className="space-y-4">
+                 <h3 className="text-xl font-black tracking-tight text-slate-800 dark:text-slate-100 px-2">Histórico Detalhado</h3>
+                 <div className="bg-white dark:bg-slate-900 rounded-[32px] border border-slate-100 dark:border-slate-800 overflow-hidden shadow-sm">
+                    {filteredSales.length === 0 ? (
+                        <div className="p-10 text-center text-slate-400">
+                           <History size={40} className="mx-auto mb-2 opacity-20"/>
+                           <p className="text-sm font-bold">Nenhuma venda neste período.</p>
+                        </div>
+                    ) : (
+                    <table className="w-full text-left">
+                      <thead className="bg-slate-50 dark:bg-slate-800 border-b dark:border-slate-700">
+                        <tr>
+                            <th className="px-6 py-5 text-[10px] font-black uppercase text-slate-400 tracking-widest hidden sm:table-cell">Data</th>
+                            <th className="px-6 py-5 text-[10px] font-black uppercase text-slate-400 tracking-widest">Resumo</th>
+                            <th className="px-6 py-5 text-[10px] font-black uppercase text-slate-400 tracking-widest hidden sm:table-cell">Pgto</th>
+                            <th className="px-6 py-5 text-[10px] font-black uppercase text-slate-400 tracking-widest text-right">Valor</th>
+                            <th className="px-6 py-5"></th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                        {filteredSales.slice().reverse().map(s => (
+                          <tr key={s.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/50 transition-colors group">
+                            <td className="px-6 py-4 hidden sm:table-cell">
+                              <p className="font-bold text-xs">{new Date(s.date).toLocaleDateString('pt-BR')}</p>
+                              <p className="text-[10px] text-slate-400">{new Date(s.date).toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})}</p>
+                            </td>
+                            <td className="px-6 py-4">
+                              <p className="font-bold text-sm text-slate-700 dark:text-slate-200">{s.items.length} itens</p>
+                              <p className="text-[10px] text-slate-400 truncate max-w-[150px]">{s.items.map(i => i.name).join(', ')}</p>
+                            </td>
+                            <td className="px-6 py-4 hidden sm:table-cell">
+                              <span className={`px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wider ${s.paymentMethod === PaymentMethod.FIADO ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'}`}>
+                                  {s.paymentMethod}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 text-right">
+                              <span className="font-black text-indigo-600 dark:text-indigo-400 text-sm">R$ {s.total.toFixed(2)}</span>
+                            </td>
+                            <td className="px-6 py-4 text-right">
+                              <button onClick={() => refundSale(s.id)} className="p-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-xl transition-all" title="Estornar Venda">
+                                <Undo2 size={16}/>
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    )}
+                 </div>
+              </div>
             </div>
           )}
 
-          {/* Estoque */}
+          {/* POS */}
+          {activeView === 'pos' && (
+             <div className="space-y-6 animate-in slide-in-from-right-4 duration-500">
+                <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
+                   <button onClick={() => setActiveView('dashboard')} className="flex items-center justify-center px-6 py-4 rounded-2xl font-black border-2 border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 hover:border-indigo-100 dark:hover:border-indigo-900/40 hover:text-indigo-600 dark:hover:text-indigo-400 transition-all shadow-sm"><History size={20} className="mr-3"/>VER RELATÓRIOS</button>
+                   <div className="flex flex-1 gap-3">
+                      <div className="relative flex-1">
+                        <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300 dark:text-slate-600" size={20} />
+                        <input type="text" placeholder="Nome do produto..." className="w-full pl-14 pr-6 py-4 rounded-2xl border-2 border-transparent bg-white dark:bg-slate-900 dark:text-slate-100 shadow-sm focus:border-indigo-600 dark:focus:border-indigo-500 transition-all font-semibold outline-none" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                      </div>
+                      <button onClick={() => { setIsPOSScanning(true); startCamera(); }} className="bg-indigo-600 text-white px-6 rounded-2xl flex items-center shadow-lg shadow-indigo-100 dark:shadow-none active:scale-95 transition-all"><Camera size={24} /></button>
+                   </div>
+                </div>
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                  <div className="lg:col-span-2 space-y-4">
+                    {isPOSScanning && (
+                      <div className="bg-slate-900 rounded-3xl overflow-hidden aspect-video relative shadow-2xl border-4 border-indigo-600/20">
+                        <video ref={videoRef} className="w-full h-full object-cover" playsInline autoPlay muted />
+                        <canvas ref={canvasRef} className="hidden" />
+                        {posLoading && <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center text-white"><RefreshCw className="animate-spin mb-4" size={32}/><span className="text-xs font-black uppercase tracking-widest">Identificando...</span></div>}
+                        {!posLoading && !pendingProduct && <button onClick={capturePOSPhoto} className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-white w-16 h-16 rounded-full border-[6px] border-indigo-600 shadow-2xl active:scale-90 transition-all flex items-center justify-center"><Camera size={24} className="text-indigo-600"/></button>}
+                        {pendingProduct && (
+                            <div className="absolute inset-x-4 bottom-4 bg-white dark:bg-slate-800 p-6 rounded-[32px] shadow-2xl animate-in slide-in-from-bottom-8">
+                              <div className="flex justify-between items-center mb-6"><div><p className="text-[10px] font-black text-indigo-400 dark:text-indigo-300 uppercase tracking-widest">Detectado</p><h3 className="text-xl font-black text-slate-800 dark:text-slate-100">{pendingProduct.name}</h3></div><span className="text-2xl font-black text-indigo-600 dark:text-indigo-400">R$ {pendingProduct.salePrice.toFixed(2)}</span></div>
+                              <div className="flex gap-4"><button onClick={() => setPendingProduct(null)} className="flex-1 py-4 bg-slate-100 dark:bg-slate-700 rounded-2xl font-black text-slate-400 dark:text-slate-300">FECHAR</button><button onClick={() => { addToCart(pendingProduct); setPendingProduct(null); }} className="flex-2 bg-emerald-600 text-white py-4 rounded-2xl font-black shadow-lg">ADICIONAR</button></div>
+                            </div>
+                        )}
+                        <button onClick={() => { stopCamera(); setIsPOSScanning(false); }} className="absolute top-6 right-6 p-2 bg-black/20 backdrop-blur-md rounded-full text-white hover:bg-black/40 transition-all"><X size={20}/></button>
+                      </div>
+                    )}
+                    <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
+                      {products.filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase())).map(product => (
+                        <button key={product.id} onClick={() => addToCart(product)} className={`bg-white dark:bg-slate-900 p-5 rounded-[28px] border-2 border-transparent shadow-sm text-left hover:border-indigo-600 dark:hover:border-indigo-500 hover:shadow-xl transition-all group relative overflow-hidden ${product.stock <= 0 ? 'opacity-40 grayscale pointer-events-none' : ''}`}>
+                          <div className="absolute top-0 right-0 p-3 opacity-0 group-hover:opacity-100 transition-opacity"><Plus className="text-indigo-600 dark:text-indigo-400" size={16}/></div>
+                          <h4 className="font-bold text-slate-800 dark:text-slate-100 truncate text-sm leading-tight">{product.name}</h4>
+                          <div className="mt-4">
+                            <p className="text-xl font-black text-slate-900 dark:text-slate-100 leading-none">R$ {product.salePrice.toFixed(2)}</p>
+                            <div className="flex items-center justify-between mt-2">
+                               <span className={`text-[10px] font-black uppercase tracking-wider ${product.stock <= product.minStock ? 'text-rose-500' : 'text-slate-300 dark:text-slate-600'}`}>Estoque: {product.stock}</span>
+                            </div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="bg-white dark:bg-slate-900 rounded-[40px] shadow-2xl border border-slate-100 dark:border-slate-800 flex flex-col h-[70vh] lg:h-[calc(100vh-14rem)] sticky top-24 overflow-hidden">
+                    <div className="p-8 border-b dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/20 flex justify-between items-center">
+                       <h3 className="font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest text-[11px]">Cesto de Vendas</h3>
+                       <span className="bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400 px-3 py-1 rounded-full text-[10px] font-black">{cart.reduce((acc, i) => acc + i.quantity, 0)} ITENS</span>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                      {cart.length === 0 ? <div className="h-full flex flex-col items-center justify-center opacity-10 dark:opacity-5"><ShoppingCart size={64}/><p className="font-black mt-4 uppercase tracking-widest text-xs">Vazio</p></div> : 
+                        cart.map(item => (
+                          <div key={item.productId} className="flex justify-between items-center p-4 bg-slate-50/50 dark:bg-slate-800/40 rounded-2xl border border-slate-100 dark:border-slate-800 animate-in slide-in-from-right-2">
+                            <div className="flex-1 pr-4">
+                                <p className="font-black text-slate-800 dark:text-slate-200 text-sm leading-tight line-clamp-2">{item.name}</p>
+                                <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500">R$ {item.price.toFixed(2)} / un.</p>
+                            </div>
+                            <div className="flex items-center gap-3 bg-slate-100 dark:bg-slate-800 p-1 rounded-full">
+                                <button onClick={() => decreaseCartItemQuantity(item.productId)} className="w-8 h-8 flex items-center justify-center bg-white dark:bg-slate-700/50 rounded-full font-black text-xl text-slate-500 dark:text-slate-300 active:scale-90 transition-transform">-</button>
+                                <span className="font-black text-base w-8 text-center tabular-nums">{item.quantity}</span>
+                                <button onClick={() => increaseCartItem(item.productId)} className="w-8 h-8 flex items-center justify-center bg-white dark:bg-slate-700/50 rounded-full font-black text-xl text-slate-500 dark:text-slate-300 active:scale-90 transition-transform">+</button>
+                            </div>
+                            <div className="text-right w-24 ml-4">
+                                <span className="font-black text-slate-800 dark:text-slate-200 text-lg tabular-nums">R$ {(item.quantity * item.price).toFixed(2)}</span>
+                            </div>
+                          </div>
+                        ))
+                      }
+                    </div>
+                    <div className="p-8 border-t dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/40 backdrop-blur-sm">
+                      <div className="flex justify-between items-end mb-6">
+                         <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-1">Total</span>
+                         <span className="text-4xl font-black text-indigo-600 dark:text-indigo-400 tracking-tighter leading-none">R$ {cart.reduce((acc, i) => acc + (i.price * i.quantity), 0).toFixed(2)}</span>
+                      </div>
+                      <button onClick={() => setIsCheckoutModalOpen(true)} disabled={cart.length === 0} className="w-full bg-indigo-600 text-white py-5 rounded-2xl font-black shadow-xl shadow-indigo-100 dark:shadow-none disabled:bg-slate-200 dark:disabled:bg-slate-800 active:scale-[0.98] transition-all text-lg tracking-tight">FECHAR VENDA</button>
+                    </div>
+                  </div>
+                </div>
+             </div>
+          )}
+
+          {/* ESTOQUE */}
           {activeView === 'inventory' && (
             <div className="space-y-6 animate-in fade-in duration-500">
                <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
                   <h3 className="text-3xl font-black tracking-tight">Gerenciamento de Estoque</h3>
                   <div className="flex gap-3">
-                    <label className="bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 px-6 py-4 rounded-2xl font-black text-sm flex items-center gap-2 cursor-pointer hover:border-indigo-600 transition-all">
-                       <Camera size={20} className="text-indigo-600"/>
-                       <span>{isScanLoading ? 'LENDO NF...' : 'IMPORTAR NF'}</span>
-                       <input type="file" className="hidden" accept="image/*" onChange={handleScanNF} disabled={isScanLoading} />
+                    <label className="bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 px-6 py-4 rounded-2xl font-black text-sm flex items-center gap-2 cursor-pointer hover:border-indigo-600 dark:hover:border-indigo-500 transition-all shadow-sm">
+                       <Camera size={20} className="text-indigo-600 dark:text-indigo-400"/>
+                       <span>{scanLoading ? 'LENDO NF...' : 'IMPORTAR NF'}</span>
+                       <input type="file" className="hidden" accept="image/*" onChange={handleFileImport} disabled={scanLoading} />
                     </label>
                     <button onClick={() => { setEditingProduct(null); setIsProductModalOpen(true); }} className="bg-indigo-600 text-white px-8 py-4 rounded-2xl font-black shadow-lg shadow-indigo-100 dark:shadow-none hover:scale-105 transition-all"><Plus size={20}/></button>
                   </div>
@@ -441,11 +943,11 @@ export default function App() {
                <div className="bg-white dark:bg-slate-900 rounded-[32px] border border-slate-100 dark:border-slate-800 overflow-hidden shadow-sm">
                   <div className="p-6 border-b dark:border-slate-800">
                      <div className="relative max-w-md">
-                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={18}/>
+                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 dark:text-slate-600" size={18}/>
                         <input 
                            type="text" 
                            placeholder="Buscar no estoque..." 
-                           className="w-full pl-12 pr-6 py-3 bg-slate-50 dark:bg-slate-800 rounded-xl outline-none font-bold text-sm"
+                           className="w-full pl-12 pr-6 py-3 bg-slate-50 dark:bg-slate-800 dark:text-slate-200 rounded-xl outline-none font-bold text-sm"
                            value={inventorySearch}
                            onChange={e => setInventorySearch(e.target.value)}
                         />
@@ -455,8 +957,8 @@ export default function App() {
                     <thead className="bg-slate-50 dark:bg-slate-800">
                        <tr>
                           <th className="px-6 py-4 text-[11px] font-black uppercase text-slate-400 tracking-widest">Produto</th>
-                          <th className="px-6 py-4 text-[11px] font-black uppercase text-slate-400 tracking-widest">Categoria</th>
-                          <th className="px-6 py-4 text-[11px] font-black uppercase text-slate-400 tracking-widest">Custo</th>
+                          <th className="px-6 py-4 text-[11px] font-black uppercase text-slate-400 tracking-widest hidden sm:table-cell">Categoria</th>
+                          <th className="px-6 py-4 text-[11px] font-black uppercase text-slate-400 tracking-widest hidden sm:table-cell">Custo</th>
                           <th className="px-6 py-4 text-[11px] font-black uppercase text-slate-400 tracking-widest">Venda</th>
                           <th className="px-6 py-4 text-[11px] font-black uppercase text-slate-400 tracking-widest">Qtd</th>
                           <th className="px-6 py-4"></th>
@@ -468,13 +970,13 @@ export default function App() {
                            <td className="px-6 py-4">
                              <p className="font-black text-sm">{p.name}</p>
                            </td>
-                           <td className="px-6 py-4">
+                           <td className="px-6 py-4 hidden sm:table-cell">
                              <span className="text-xs font-bold text-slate-400">{p.category}</span>
                            </td>
-                           <td className="px-6 py-4 text-sm text-slate-500">R$ {p.costPrice.toFixed(2)}</td>
-                           <td className="px-6 py-4 font-black text-indigo-600">R$ {p.salePrice.toFixed(2)}</td>
+                           <td className="px-6 py-4 text-sm text-slate-500 hidden sm:table-cell">R$ {p.costPrice.toFixed(2)}</td>
+                           <td className="px-6 py-4 font-black text-indigo-600 dark:text-indigo-400">R$ {p.salePrice.toFixed(2)}</td>
                            <td className="px-6 py-4">
-                              <div className={`px-3 py-1 rounded-lg inline-block font-black text-xs ${p.stock <= p.minStock ? 'bg-rose-100 text-rose-600' : 'bg-emerald-100 text-emerald-600'}`}>
+                              <div className={`px-3 py-1 rounded-lg inline-block font-black text-xs ${p.stock <= p.minStock ? 'bg-rose-100 dark:bg-rose-900/30 text-rose-600' : 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600'}`}>
                                  {p.stock}
                               </div>
                            </td>
@@ -489,12 +991,12 @@ export default function App() {
             </div>
           )}
 
-          {/* Despesas */}
+          {/* DESPESAS */}
           {activeView === 'expenses' && (
             <div className="space-y-6 animate-in fade-in duration-500">
                <div className="flex items-center justify-between">
                   <h3 className="text-3xl font-black tracking-tight">Fluxo de Despesas</h3>
-                  <button onClick={() => { setEditingExpense(null); setIsExpenseModalOpen(true); }} className="bg-indigo-600 text-white px-8 py-4 rounded-2xl font-black shadow-lg"><Plus size={20}/></button>
+                  <button onClick={() => { setEditingExpenseId(null); setNewExpense({ description: '', amount: 0, dueDate: '', type: ExpenseType.FIXA }); setIsExpenseModalOpen(true); }} className="bg-indigo-600 text-white px-8 py-4 rounded-2xl font-black shadow-lg"><Plus size={20}/></button>
                </div>
 
                <div className="bg-white dark:bg-slate-900 rounded-[32px] border border-slate-100 dark:border-slate-800 overflow-hidden shadow-sm">
@@ -502,7 +1004,7 @@ export default function App() {
                     <thead className="bg-slate-50 dark:bg-slate-800 border-b dark:border-slate-700">
                        <tr>
                           <th className="px-6 py-5 text-[11px] font-black uppercase text-slate-400 tracking-widest">Descrição</th>
-                          <th className="px-6 py-5 text-[11px] font-black uppercase text-slate-400 tracking-widest">Tipo</th>
+                          <th className="px-6 py-5 text-[11px] font-black uppercase text-slate-400 tracking-widest hidden sm:table-cell">Tipo</th>
                           <th className="px-6 py-5 text-[11px] font-black uppercase text-slate-400 tracking-widest">Vencimento</th>
                           <th className="px-6 py-5 text-[11px] font-black uppercase text-slate-400 tracking-widest">Valor</th>
                           <th className="px-6 py-5 text-[11px] font-black uppercase text-slate-400 tracking-widest">Status</th>
@@ -513,13 +1015,13 @@ export default function App() {
                        {expenses.map(e => (
                          <tr key={e.id}>
                            <td className="px-6 py-5 font-black text-sm">{e.description}</td>
-                           <td className="px-6 py-5 text-xs text-slate-400 font-bold uppercase">{e.type}</td>
+                           <td className="px-6 py-5 text-xs text-slate-400 font-bold uppercase hidden sm:table-cell">{e.type}</td>
                            <td className="px-6 py-5 text-sm text-slate-500">{new Date(e.dueDate).toLocaleDateString('pt-BR')}</td>
                            <td className="px-6 py-5 font-black text-rose-500">R$ {e.amount.toFixed(2)}</td>
                            <td className="px-6 py-5">
                              <button 
                                 onClick={() => setExpenses(prev => prev.map(item => item.id === e.id ? { ...item, isPaid: !item.isPaid } : item))}
-                                className={`px-3 py-1 rounded-full text-[10px] font-black tracking-widest ${e.isPaid ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}
+                                className={`px-3 py-1 rounded-full text-[10px] font-black tracking-widest ${e.isPaid ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400' : 'bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-400'}`}
                              >
                                 {e.isPaid ? 'PAGO' : 'PENDENTE'}
                              </button>
@@ -535,67 +1037,113 @@ export default function App() {
             </div>
           )}
 
-          {/* Ajustes */}
+          {/* AJUSTES */}
           {activeView === 'settings' && (
-            <div className="max-w-2xl mx-auto space-y-8 animate-in zoom-in-95 duration-500">
-               <div className="bg-white dark:bg-slate-900 p-10 rounded-[48px] border border-slate-100 dark:border-slate-800 shadow-xl">
-                  <h3 className="text-3xl font-black mb-8">Preferências do Sistema</h3>
-                  
-                  <div className="space-y-10">
-                    <section>
-                      <h4 className="text-[11px] font-black text-indigo-600 uppercase tracking-widest mb-4">Segurança de Dados</h4>
-                      <div className="grid grid-cols-2 gap-4">
-                        <button className="flex items-center justify-center gap-3 bg-slate-50 dark:bg-slate-800 p-5 rounded-2xl font-black text-sm hover:bg-indigo-50 transition-all border-2 border-transparent hover:border-indigo-100">
-                           <Download size={20} className="text-indigo-600"/> Exportar JSON
-                        </button>
-                        <button className="flex items-center justify-center gap-3 bg-slate-50 dark:bg-slate-800 p-5 rounded-2xl font-black text-sm hover:bg-indigo-50 transition-all border-2 border-transparent hover:border-indigo-100">
-                           <Upload size={20} className="text-indigo-600"/> Importar JSON
-                        </button>
-                      </div>
-                    </section>
+            <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in duration-500">
+                <div className="bg-white dark:bg-slate-900 p-10 rounded-[48px] border border-slate-100 dark:border-slate-800 shadow-xl overflow-hidden relative group">
+                    <div className="absolute top-0 right-0 p-10 opacity-5 group-hover:scale-110 transition-transform"><Cloud size={160} className="dark:text-slate-400" /></div>
+                    <div className="relative z-10">
+                        <h3 className="text-3xl font-black text-slate-800 dark:text-slate-100 flex items-center gap-4">
+                            <Cloud className="text-indigo-600 dark:text-indigo-400" size={36}/>
+                            Backup na Nuvem
+                        </h3>
+                        <p className="text-slate-400 dark:text-slate-500 mt-4 text-base leading-relaxed max-w-xl font-medium">Conecte sua conta Google para salvar e restaurar seus dados de forma segura no Google Drive.</p>
+                        
+                        <div className="mt-10 bg-slate-50 dark:bg-slate-800/50 p-8 rounded-[32px] border border-slate-100 dark:border-slate-800">
+                        {!clientId ? (
+                           <div className="flex flex-col items-center text-center">
+                              <img src="https://upload.wikimedia.org/wikipedia/commons/d/da/Google_Drive_logo.png" alt="Google Drive" className="w-16 h-16 mb-4"/>
+                              <h4 className="font-black text-slate-800 dark:text-slate-100 text-xl mb-2">Conecte seu Google Drive</h4>
+                              <p className="text-sm text-slate-400 dark:text-slate-500 mb-6 max-w-sm">Para começar, configure suas credenciais da API do Google. Você só precisa fazer isso uma vez.</p>
+                              <button onClick={() => setIsCredentialsModalOpen(true)} className="bg-indigo-600 text-white font-black py-5 px-10 rounded-2xl shadow-lg hover:bg-indigo-700 transition-all active:scale-95 flex items-center gap-3">
+                                <Settings size={20}/> CONFIGURAR CONEXÃO
+                              </button>
+                            </div>
+                        ) : !isDriveAuthenticated ? (
+                            <div className="flex flex-col items-center text-center">
+                                <img src="https://upload.wikimedia.org/wikipedia/commons/d/da/Google_Drive_logo.png" alt="Google Drive" className="w-16 h-16 mb-4"/>
+                                <h4 className="font-black text-slate-800 dark:text-slate-100 text-xl mb-2">Conectar ao Google Drive</h4>
+                                <p className="text-sm text-slate-400 dark:text-slate-500 mb-6 max-w-sm">Suas credenciais estão salvas. Autorize o acesso para começar a usar o backup na nuvem.</p>
+                                <div className="flex flex-col items-center gap-4">
+                                  <button onClick={handleDriveAuth} disabled={!googleScriptsLoaded} className="bg-white text-slate-700 font-black py-5 px-10 rounded-2xl shadow-lg hover:bg-slate-200 transition-all active:scale-95 flex items-center gap-3 disabled:opacity-50 disabled:cursor-wait">
+                                      {!googleScriptsLoaded && <RefreshCw size={20} className="animate-spin" />} CONECTAR AO GOOGLE
+                                  </button>
+                                  <button onClick={() => setIsCredentialsModalOpen(true)} className="text-xs text-slate-400 hover:text-indigo-500 transition-colors">Editar credenciais</button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div>
+                                <div className="flex flex-col sm:flex-row justify-between items-center mb-6 bg-emerald-50/50 dark:bg-emerald-900/10 p-4 rounded-2xl border border-emerald-100 dark:border-emerald-900/20">
+                                    <div className="flex items-center gap-3">
+                                    <img src={driveUser?.picture} alt="User" className="w-10 h-10 rounded-full"/>
+                                    <div>
+                                        <p className="font-bold text-sm text-slate-800 dark:text-slate-200">{driveUser?.name}</p>
+                                        <p className="text-xs text-slate-400 dark:text-slate-500">{driveUser?.email}</p>
+                                    </div>
+                                    </div>
+                                    <button onClick={handleDriveSignOut} className="mt-3 sm:mt-0 flex items-center gap-2 text-xs font-bold text-rose-500 dark:text-rose-400 bg-rose-50 dark:bg-rose-900/20 px-4 py-2 rounded-lg hover:bg-rose-100 dark:hover:bg-rose-900/40 transition-colors">
+                                    <LogOut size={14} /> DESCONECTAR
+                                    </button>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <button onClick={handleExportToDrive} disabled={isDriveLoading} className="bg-indigo-600 dark:bg-indigo-500 text-white font-black py-6 rounded-2xl shadow-lg hover:bg-indigo-700 transition-all active:scale-95 flex items-center justify-center gap-3 disabled:opacity-50">
+                                    {isDriveLoading ? <RefreshCw size={24} className="animate-spin" /> : <Upload size={24}/>} SALVAR BACKUP
+                                    </button>
+                                    <button onClick={handleImportFromDrive} disabled={isDriveLoading} className="bg-white dark:bg-slate-700 text-slate-700 dark:text-white font-black py-6 rounded-2xl shadow-lg hover:bg-slate-50 dark:hover:bg-slate-600 transition-all active:scale-95 flex items-center justify-center gap-3 disabled:opacity-50">
+                                    {isDriveLoading ? <RefreshCw size={24} className="animate-spin" /> : <Download size={24}/>} RESTAURAR
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                        </div>
+                    </div>
+                </div>
 
-                    <section>
-                      <h4 className="text-[11px] font-black text-indigo-600 uppercase tracking-widest mb-4">Unidade de Negócio</h4>
-                      <div className="space-y-4">
-                         <div className="flex flex-col gap-1">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Nome do Estabelecimento</label>
-                            <input type="text" defaultValue="Minimercado Coruja" className="p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-600 transition-all" />
-                         </div>
-                         <div className="flex flex-col gap-1">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Margem de Lucro Sugerida (%)</label>
-                            <input type="number" defaultValue="35" className="p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-600 transition-all" />
-                         </div>
-                      </div>
-                    </section>
-
-                    <button className="w-full bg-indigo-600 text-white py-5 rounded-2xl font-black shadow-lg hover:scale-[1.02] active:scale-95 transition-all">SALVAR ALTERAÇÕES</button>
-                  </div>
-               </div>
+                <div className="bg-white dark:bg-slate-900 p-10 rounded-[48px] border border-slate-100 dark:border-slate-800 shadow-xl">
+                   <h3 className="text-2xl font-black text-slate-800 dark:text-slate-100 mb-6">Backup Local</h3>
+                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <button onClick={handleExportLocalBackup} className="flex items-center justify-center gap-3 bg-slate-50 dark:bg-slate-800 p-5 rounded-2xl font-black text-sm hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-all border-2 border-transparent hover:border-indigo-100 dark:hover:border-indigo-800 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400">
+                         <Download size={20}/> Baixar Arquivo JSON
+                      </button>
+                      <label className="flex items-center justify-center gap-3 bg-slate-50 dark:bg-slate-800 p-5 rounded-2xl font-black text-sm hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-all border-2 border-transparent hover:border-indigo-100 dark:hover:border-indigo-800 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 cursor-pointer">
+                         <Upload size={20}/> Carregar Arquivo JSON
+                         <input type="file" className="hidden" accept="application/json" onChange={handleImportLocalBackup} />
+                      </label>
+                   </div>
+                </div>
             </div>
           )}
 
-          {/* Fiado (Clientes) */}
+          {/* FIADO */}
           {activeView === 'customers' && (
             <div className="space-y-8 animate-in fade-in duration-500">
                <div className="flex items-center justify-between">
                   <h3 className="text-3xl font-black tracking-tight">Gestão de Fiados</h3>
-                  <button onClick={() => { setEditingCustomer(null); setIsCustomerModalOpen(true); }} className="bg-indigo-600 text-white px-8 py-4 rounded-2xl font-black shadow-lg"><UserPlus size={20}/></button>
+                  <button onClick={() => { setEditingCustomer(null); setNewCustomer({ name: '', phone: '', creditLimit: 0 }); setIsCustomerModalOpen(true); }} className="bg-indigo-600 text-white px-8 py-4 rounded-2xl font-black shadow-lg"><UserPlus size={20}/></button>
                </div>
                
                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                  {customers.map(c => (
                    <div key={c.id} className="bg-white dark:bg-slate-900 p-8 rounded-[40px] border border-slate-100 dark:border-slate-800 shadow-sm relative group">
-                      <button 
-                        onClick={() => { setEditingCustomer(c); setIsCustomerModalOpen(true); }} 
-                        className="absolute top-6 right-6 p-2 text-slate-300 hover:text-indigo-600 transition-all opacity-0 group-hover:opacity-100"
-                      >
-                        <Edit2 size={18}/>
-                      </button>
+                      <div className="absolute top-6 right-6 flex gap-2 opacity-0 group-hover:opacity-100 transition-all">
+                        <button 
+                            onClick={() => { setEditingCustomer(c); setNewCustomer({ name: c.name, phone: c.phone, creditLimit: c.creditLimit }); setIsCustomerModalOpen(true); }} 
+                            className="p-2 text-slate-300 hover:text-indigo-600 transition-colors"
+                        >
+                            <Edit2 size={18}/>
+                        </button>
+                        <button 
+                            onClick={() => handleDeleteCustomer(c.id)} 
+                            className="p-2 text-slate-300 hover:text-rose-600 transition-colors"
+                        >
+                            <Trash2 size={18}/>
+                        </button>
+                      </div>
                       <div className="flex items-start gap-4 mb-6">
                         <div className="w-14 h-14 bg-indigo-50 dark:bg-indigo-900/30 rounded-2xl flex items-center justify-center text-indigo-600 text-xl font-black">{c.name[0]}</div>
                         <div>
                            <h4 className="font-black text-xl leading-tight">{c.name}</h4>
-                           <p className="text-xs text-slate-400 font-bold mt-1">CPF: {c.cpf || 'Não informado'}</p>
+                           <p className="text-xs text-slate-400 font-bold mt-1">{c.phone || 'Sem telefone'}</p>
                         </div>
                       </div>
                       <div className="space-y-4 pt-6 border-t dark:border-slate-800">
@@ -607,6 +1155,10 @@ export default function App() {
                             <div className="h-full bg-rose-500 transition-all duration-1000" style={{width: `${Math.min(100, (c.currentDebt / c.creditLimit) * 100)}%`}}></div>
                          </div>
                          <p className="text-[10px] font-black text-slate-400 text-right uppercase">Limite: R$ {c.creditLimit.toFixed(2)}</p>
+                      </div>
+                      <div className="pt-6 border-t dark:border-slate-800 flex justify-between items-center">
+                        <p className="text-lg font-black text-indigo-700 dark:text-indigo-400">Pago: R$ {c.totalPaid.toFixed(2)}</p>
+                        <button onClick={() => { setSelectedCustomerForPayment(c); setPaymentAmount(c.currentDebt.toString()); setIsPaymentModalOpen(true); }} className="bg-emerald-50 dark:bg-emerald-950/20 text-emerald-600 px-6 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center gap-2 hover:bg-emerald-600 hover:text-white transition-all"><HandCoins size={18}/> RECEBER</button>
                       </div>
                    </div>
                  ))}
@@ -621,7 +1173,7 @@ export default function App() {
       {/* Modal Pagamento (PDV) */}
       {isCheckoutModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-md p-4 animate-in fade-in">
-           <div className="bg-white dark:bg-slate-900 w-full max-w-lg rounded-[48px] p-10 shadow-2xl relative">
+           <div className="bg-white dark:bg-slate-900 w-full max-w-lg rounded-[48px] p-10 shadow-2xl relative border dark:border-slate-800">
               <button onClick={() => setIsCheckoutModalOpen(false)} className="absolute top-8 right-8 text-slate-400"><X/></button>
               <h3 className="text-3xl font-black mb-10 text-center tracking-tight">Finalizar Venda</h3>
               <div className="space-y-8">
@@ -641,7 +1193,7 @@ export default function App() {
                     <div className="space-y-2 animate-in slide-in-from-top-4">
                        <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Vincular Cliente</label>
                        <select 
-                         className="w-full p-5 bg-slate-50 dark:bg-slate-800 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-600"
+                         className="w-full p-5 bg-slate-50 dark:bg-slate-800 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-600 dark:text-slate-100"
                          value={selectedCustomerId}
                          onChange={e => setSelectedCustomerId(e.target.value)}
                        >
@@ -665,21 +1217,21 @@ export default function App() {
       {/* Modal Produto (Novo/Edição) */}
       {isProductModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-md p-4 animate-in fade-in">
-           <div className="bg-white dark:bg-slate-900 w-full max-w-lg rounded-[48px] p-10 shadow-2xl">
+           <div className="bg-white dark:bg-slate-900 w-full max-w-lg rounded-[48px] p-10 shadow-2xl border dark:border-slate-800">
               <h3 className="text-2xl font-black mb-8">{editingProduct ? 'Editar' : 'Novo'} Produto</h3>
               <div className="space-y-4">
-                 <input type="text" placeholder="Nome do Produto" defaultValue={editingProduct?.name} className="w-full p-5 bg-slate-50 dark:bg-slate-800 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-600" />
+                 <input type="text" placeholder="Nome do Produto" value={newProduct.name || editingProduct?.name || ''} onChange={e => setNewProduct({...newProduct, name: e.target.value})} className="w-full p-5 bg-slate-50 dark:bg-slate-800 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-600 dark:text-slate-100" />
                  <div className="grid grid-cols-2 gap-4">
-                    <input type="number" placeholder="Custo" defaultValue={editingProduct?.costPrice} className="p-5 bg-slate-50 dark:bg-slate-800 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-600" />
-                    <input type="number" placeholder="Venda" defaultValue={editingProduct?.salePrice} className="p-5 bg-slate-50 dark:bg-slate-800 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-600" />
+                    <input type="number" placeholder="Custo" value={newProduct.costPrice || editingProduct?.costPrice || ''} onChange={e => setNewProduct({...newProduct, costPrice: Number(e.target.value)})} className="p-5 bg-slate-50 dark:bg-slate-800 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-600 dark:text-slate-100" />
+                    <input type="number" placeholder="Venda" value={newProduct.salePrice || editingProduct?.salePrice || ''} onChange={e => setNewProduct({...newProduct, salePrice: Number(e.target.value)})} className="p-5 bg-slate-50 dark:bg-slate-800 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-600 dark:text-slate-100" />
                  </div>
                  <div className="grid grid-cols-2 gap-4">
-                    <input type="number" placeholder="Estoque Inicial" defaultValue={editingProduct?.stock} className="p-5 bg-slate-50 dark:bg-slate-800 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-600" />
-                    <input type="number" placeholder="Mínimo" defaultValue={editingProduct?.minStock} className="p-5 bg-slate-50 dark:bg-slate-800 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-600" />
+                    <input type="number" placeholder="Estoque Inicial" value={newProduct.stock || editingProduct?.stock || ''} onChange={e => setNewProduct({...newProduct, stock: Number(e.target.value)})} className="p-5 bg-slate-50 dark:bg-slate-800 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-600 dark:text-slate-100" />
+                    <input type="number" placeholder="Mínimo" value={newProduct.minStock || editingProduct?.minStock || ''} onChange={e => setNewProduct({...newProduct, minStock: Number(e.target.value)})} className="p-5 bg-slate-50 dark:bg-slate-800 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-600 dark:text-slate-100" />
                  </div>
                  <div className="flex gap-4 mt-6">
-                    <button onClick={() => setIsProductModalOpen(false)} className="flex-1 py-5 bg-slate-100 dark:bg-slate-800 rounded-2xl font-black text-slate-400">FECHAR</button>
-                    <button className="flex-[2] bg-indigo-600 text-white py-5 rounded-2xl font-black shadow-lg">SALVAR PRODUTO</button>
+                    <button onClick={() => setIsProductModalOpen(false)} className="flex-1 py-5 bg-slate-100 dark:bg-slate-800 rounded-2xl font-black text-slate-400 dark:text-slate-300">FECHAR</button>
+                    <button onClick={handleSaveProduct} className="flex-[2] bg-indigo-600 text-white py-5 rounded-2xl font-black shadow-lg">SALVAR PRODUTO</button>
                  </div>
               </div>
            </div>
@@ -689,21 +1241,149 @@ export default function App() {
       {/* Modal Cliente (Novo/Edição) */}
       {isCustomerModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-md p-4 animate-in fade-in">
-           <div className="bg-white dark:bg-slate-900 w-full max-w-lg rounded-[48px] p-10 shadow-2xl">
+           <div className="bg-white dark:bg-slate-900 w-full max-w-lg rounded-[48px] p-10 shadow-2xl border dark:border-slate-800">
               <h3 className="text-2xl font-black mb-8">{editingCustomer ? 'Editar' : 'Novo'} Cliente</h3>
               <div className="space-y-4">
-                 <input type="text" placeholder="Nome do Cliente" defaultValue={editingCustomer?.name} className="w-full p-5 bg-slate-50 dark:bg-slate-800 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-600" />
-                 <input type="text" placeholder="CPF (000.000.000-00)" defaultValue={editingCustomer?.cpf} className="w-full p-5 bg-slate-50 dark:bg-slate-800 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-600" />
-                 <input type="text" placeholder="WhatsApp / Telefone" defaultValue={editingCustomer?.phone} className="w-full p-5 bg-slate-50 dark:bg-slate-800 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-600" />
-                 <input type="number" placeholder="Limite de Crédito R$" defaultValue={editingCustomer?.creditLimit} className="w-full p-5 bg-slate-50 dark:bg-slate-800 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-600" />
+                 <input type="text" placeholder="Nome do Cliente" value={newCustomer.name} onChange={e => setNewCustomer({...newCustomer, name: e.target.value})} className="w-full p-5 bg-slate-50 dark:bg-slate-800 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-600 dark:text-slate-100" />
+                 <input type="text" placeholder="WhatsApp / Telefone" value={newCustomer.phone} onChange={e => setNewCustomer({...newCustomer, phone: e.target.value})} className="w-full p-5 bg-slate-50 dark:bg-slate-800 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-600 dark:text-slate-100" />
+                 <input type="number" placeholder="Limite de Crédito R$" value={newCustomer.creditLimit || ''} onChange={e => setNewCustomer({...newCustomer, creditLimit: Number(e.target.value)})} className="w-full p-5 bg-slate-50 dark:bg-slate-800 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-600 dark:text-slate-100" />
                  <div className="flex gap-4 mt-6">
-                    <button onClick={() => setIsCustomerModalOpen(false)} className="flex-1 py-5 bg-slate-100 dark:bg-slate-800 rounded-2xl font-black text-slate-400">FECHAR</button>
-                    <button className="flex-[2] bg-indigo-600 text-white py-5 rounded-2xl font-black shadow-lg">SALVAR CLIENTE</button>
+                    <button onClick={() => setIsCustomerModalOpen(false)} className="flex-1 py-5 bg-slate-100 dark:bg-slate-800 rounded-2xl font-black text-slate-400 dark:text-slate-300">FECHAR</button>
+                    <button onClick={handleSaveCustomer} className="flex-[2] bg-indigo-600 text-white py-5 rounded-2xl font-black shadow-lg">SALVAR CLIENTE</button>
                  </div>
               </div>
            </div>
         </div>
       )}
+
+      {/* Modal Despesa (Nova/Edição) */}
+      {isExpenseModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-md p-4 animate-in fade-in">
+           <div className="bg-white dark:bg-slate-900 w-full max-w-lg rounded-[48px] p-10 shadow-2xl border dark:border-slate-800">
+              <div className="flex justify-between items-center mb-8">
+                <h3 className="text-2xl font-black text-slate-800 dark:text-slate-100">Nova Despesa</h3>
+                <label className="bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 p-3 rounded-xl cursor-pointer hover:bg-indigo-100 transition-colors">
+                    <Camera size={20}/>
+                    <input type="file" className="hidden" accept="image/*" onChange={handleExpenseFileImport} disabled={expenseScanLoading} ref={expenseFileInputRef}/>
+                </label>
+              </div>
+              <div className="space-y-4">
+                 <input type="text" placeholder="Descrição (ex: Conta de Luz)" value={newExpense.description} onChange={e => setNewExpense({...newExpense, description: e.target.value})} className="w-full p-5 bg-slate-50 dark:bg-slate-800 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-600 dark:text-slate-100" />
+                 <div className="grid grid-cols-2 gap-4">
+                    <input type="number" placeholder="Valor R$" value={newExpense.amount || ''} onChange={e => setNewExpense({...newExpense, amount: Number(e.target.value)})} className="p-5 bg-slate-50 dark:bg-slate-800 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-600 dark:text-slate-100" />
+                    <input type="date" value={newExpense.dueDate} onChange={e => setNewExpense({...newExpense, dueDate: e.target.value})} className="p-5 bg-slate-50 dark:bg-slate-800 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-600 dark:text-slate-100" />
+                 </div>
+                 <div className="flex gap-2">
+                    {[ExpenseType.FIXA, ExpenseType.ESTOQUE].map(t => (
+                        <button key={t} onClick={() => setNewExpense({...newExpense, type: t})} className={`flex-1 p-4 rounded-2xl font-bold text-xs uppercase tracking-wider border-2 ${newExpense.type === t ? 'border-indigo-600 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600' : 'border-slate-100 dark:border-slate-800 text-slate-400'}`}>
+                            {t}
+                        </button>
+                    ))}
+                 </div>
+                 
+                 <div className="flex gap-4 mt-6">
+                    <button onClick={() => setIsExpenseModalOpen(false)} className="flex-1 py-5 bg-slate-100 dark:bg-slate-800 rounded-2xl font-black text-slate-400 dark:text-slate-300">FECHAR</button>
+                    <button onClick={handleAddOrUpdateExpense} className="flex-[2] bg-indigo-600 text-white py-5 rounded-2xl font-black shadow-lg">SALVAR CONTA</button>
+                 </div>
+              </div>
+           </div>
+        </div>
+      )}
+
+      {/* Modal Pagamento Fiado */}
+      {isPaymentModalOpen && selectedCustomerForPayment && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-md p-4 animate-in fade-in duration-300">
+            <div className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-[40px] p-10 shadow-2xl border dark:border-slate-800">
+              <h3 className="text-2xl font-black mb-2 text-slate-800 dark:text-slate-100 tracking-tight">Receber Fiado</h3>
+              <p className="text-sm mb-8 text-slate-400 font-medium">Cliente: <span className="text-indigo-600 dark:text-indigo-400 font-black">{selectedCustomerForPayment.name}</span></p>
+              <div className="relative mb-8">
+                 <span className="absolute left-6 top-1/2 -translate-y-1/2 font-black text-slate-300 text-xl">R$</span>
+                 <input autoFocus type="number" className="w-full pl-16 pr-8 py-6 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-indigo-600 dark:focus:border-indigo-500 rounded-3xl text-3xl font-black text-indigo-600 dark:text-indigo-400 outline-none transition-all dark:text-slate-100" value={paymentAmount} onChange={e => setPaymentAmount(e.target.value)} />
+              </div>
+              <div className="flex gap-4">
+                 <button onClick={() => setIsPaymentModalOpen(false)} className="flex-1 font-black text-slate-400 uppercase tracking-widest text-[11px]">FECHAR</button>
+                 <button onClick={handleRegisterPayment} className="flex-2 bg-emerald-600 text-white py-5 rounded-2xl font-black shadow-lg">CONFIRMAR</button>
+              </div>
+            </div>
+          </div>
+      )}
+
+      {/* Modal Credenciais API */}
+      {isCredentialsModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-md p-4 animate-in fade-in">
+           <div className="bg-white dark:bg-slate-900 w-full max-w-lg rounded-[48px] p-10 shadow-2xl border dark:border-slate-800">
+              <h3 className="text-2xl font-black mb-6 dark:text-slate-100">Configuração Google</h3>
+              <p className="text-sm text-slate-500 dark:text-slate-400 mb-8">Para ativar o backup no Google Drive, você precisa criar um projeto no Google Cloud Console e obter um 'Client ID'.</p>
+              
+              <div className="space-y-4">
+                 <div className="bg-indigo-50 dark:bg-indigo-900/20 p-4 rounded-2xl text-xs text-indigo-800 dark:text-indigo-300 mb-4 leading-relaxed">
+                    <strong>Como obter:</strong><br/>
+                    1. Acesse console.cloud.google.com<br/>
+                    2. Crie um novo projeto<br/>
+                    3. Ative a "Google Drive API"<br/>
+                    4. Em "Credenciais", crie um "OAuth Client ID" (Aplicação Web)<br/>
+                    5. Adicione a URL atual em "Origens JavaScript autorizadas"<br/>
+                    6. Copie o ID do Cliente abaixo.
+                 </div>
+                 <input 
+                    type="text" 
+                    placeholder="Cole seu Google Client ID aqui..." 
+                    defaultValue={clientId}
+                    id="client-id-input"
+                    className="w-full p-5 bg-slate-50 dark:bg-slate-800 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-600 dark:text-slate-100 text-xs" 
+                 />
+                 <div className="flex gap-4 mt-6">
+                    <button onClick={() => setIsCredentialsModalOpen(false)} className="flex-1 py-5 bg-slate-100 dark:bg-slate-800 rounded-2xl font-black text-slate-400 dark:text-slate-300">CANCELAR</button>
+                    <button onClick={() => {
+                        const input = document.getElementById('client-id-input') as HTMLInputElement;
+                        handleSaveCredentials(input.value);
+                    }} className="flex-[2] bg-indigo-600 text-white py-5 rounded-2xl font-black shadow-lg">SALVAR</button>
+                 </div>
+              </div>
+           </div>
+        </div>
+      )}
+      
+      {/* Modal OCR Results */}
+      {isScanResultsModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-md p-4 animate-in fade-in">
+           <div className="bg-white dark:bg-slate-900 w-full max-w-lg rounded-[48px] p-8 shadow-2xl flex flex-col max-h-[85vh] border dark:border-slate-800">
+              <h3 className="text-2xl font-black mb-6 flex items-center gap-3 dark:text-slate-100"><CheckCircle2 className="text-emerald-500"/> Produtos Identificados</h3>
+              <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
+                 {scannedResults.map((p, i) => (
+                    <div key={i} className="flex justify-between items-center p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700">
+                       <div>
+                          <p className="font-bold text-sm dark:text-slate-200">{p.name}</p>
+                          <p className="text-xs text-slate-400">Custo: R$ {p.costPrice.toFixed(2)}</p>
+                       </div>
+                       <div className="bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 px-3 py-1 rounded-lg font-black text-xs">
+                          {p.quantity} un
+                       </div>
+                    </div>
+                 ))}
+              </div>
+              <div className="mt-8 pt-6 border-t dark:border-slate-800 flex gap-4">
+                 <button onClick={() => { setIsScanResultsModalOpen(false); setScannedResults([]); }} className="flex-1 py-4 bg-slate-100 dark:bg-slate-800 rounded-2xl font-black text-slate-400 dark:text-slate-300 text-xs">DESCARTAR</button>
+                 <button onClick={confirmImport} className="flex-[2] bg-emerald-600 text-white py-4 rounded-2xl font-black shadow-lg hover:scale-[1.02] transition-all">CONFIRMAR IMPORTAÇÃO</button>
+              </div>
+           </div>
+        </div>
+      )}
+
+      {/* Modal Expense (Nova/Edição) */}
+      {isExpenseScanning && (
+         <div className="fixed inset-0 z-[100] bg-black flex flex-col">
+            <video ref={videoRef} className="flex-1 object-cover" playsInline autoPlay muted />
+            <canvas ref={canvasRef} className="hidden" />
+            <button onClick={() => { stopCamera(); setIsExpenseScanning(false); }} className="absolute top-8 right-8 p-4 bg-black/40 backdrop-blur-md rounded-full text-white"><X size={24}/></button>
+            <div className="absolute bottom-10 left-0 right-0 flex justify-center pb-safe">
+               <button onClick={captureExpensePhoto} className="w-20 h-20 bg-white rounded-full border-4 border-indigo-600 flex items-center justify-center shadow-2xl active:scale-90 transition-all">
+                  {expenseScanLoading ? <RefreshCw className="animate-spin text-indigo-600"/> : <div className="w-16 h-16 bg-slate-100 rounded-full"/>}
+               </button>
+            </div>
+         </div>
+      )}
+
     </div>
   );
 }

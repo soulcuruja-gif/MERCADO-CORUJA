@@ -46,7 +46,7 @@ export interface Sale {
   totalCost: number;
   profit: number;
   paymentMethod: PaymentMethod;
-  customerId?: string; 
+  customerId?: string; // Associated customer for "Fiado" payments
 }
 
 export interface Expense {
@@ -62,14 +62,13 @@ export interface Expense {
 export interface Customer {
   id: string;
   name: string;
-  cpf: string;
   phone: string;
   creditLimit: number;
   currentDebt: number;
   totalPaid: number;
 }
 
-export type View = 'dashboard' | 'pos' | 'inventory' | 'expenses' | 'customers' | 'sales_history' | 'settings';
+export type View = 'dashboard' | 'pos' | 'inventory' | 'expenses' | 'customers' | 'settings';
 
 export interface ScannedProduct {
   name: string;
