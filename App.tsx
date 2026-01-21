@@ -740,8 +740,8 @@ export default function App() {
       >
         <div className={`p-6 flex items-center transition-all ${isSidebarCollapsed ? 'justify-center px-0' : 'justify-between'}`}>
           <div className="flex items-center space-x-2">
-            <div className="bg-indigo-600 p-1.5 rounded-xl text-white shadow-lg shadow-indigo-100 dark:shadow-indigo-900/20 shrink-0 flex items-center justify-center">
-              <img src="https://cdn-icons-png.flaticon.com/512/952/952763.png" alt="Coruja Logo" className="w-6 h-6" />
+            <div className="bg-white p-1.5 rounded-xl text-white shadow-lg shrink-0 flex items-center justify-center">
+              <img src="https://i.ibb.co/yY1c3Tj/coruja-mercado-logo.png" alt="Coruja Logo" className="w-8 h-8 rounded-lg" />
             </div>
             {!isSidebarCollapsed && (
               <h1 className="text-xl font-black text-slate-800 dark:text-slate-100 tracking-tight whitespace-nowrap overflow-hidden animate-in fade-in">
@@ -812,8 +812,8 @@ export default function App() {
               <span className="text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">Saldo do Dia</span>
               <span className="text-sm font-black text-emerald-600 dark:text-emerald-500">R$ {dailySales.toFixed(2)}</span>
             </div>
-            <div className="w-10 h-10 bg-slate-100 dark:bg-slate-800 rounded-full border-2 border-white dark:border-slate-700 shadow-sm overflow-hidden flex items-center justify-center">
-               <img src="https://cdn-icons-png.flaticon.com/512/952/952763.png" alt="Logo" className="w-6 h-6 object-contain" />
+            <div className="w-10 h-10 bg-white dark:bg-slate-800 rounded-full border-2 border-white dark:border-slate-700 shadow-sm overflow-hidden flex items-center justify-center p-1">
+               <img src="https://i.ibb.co/yY1c3Tj/coruja-mercado-logo.png" alt="Logo" className="w-full h-full object-contain rounded-full" />
             </div>
           </div>
         </header>
