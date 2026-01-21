@@ -332,6 +332,23 @@ export default function App() {
   const handleRegisterPayment = () => { if (!selectedCustomerForPayment || !paymentAmount) return; const amount = Number(paymentAmount); setCustomers(prev => prev.map(c => c.id === selectedCustomerForPayment.id ? { ...c, currentDebt: Math.max(0, Number((c.currentDebt - amount).toFixed(2))), totalPaid: Number((c.totalPaid + amount).toFixed(2)) } : c)); setIsPaymentModalOpen(false); setPaymentAmount(""); setSelectedCustomerForPayment(null); };
   const handleSaveProduct = () => { if (!newProduct.name || !newProduct.salePrice) return alert("Preencha nome e preço."); const p = { id: editingProduct?.id || `p${Date.now()}`, ...newProduct, lastUpdated: new Date().toISOString() }; if (editingProduct) setProducts(prev => prev.map(item => item.id === editingProduct.id ? p : item)); else setProducts(prev => [...prev, p]); setIsProductModalOpen(false); setNewProduct({ name: '', category: Category.ALIMENTOS, costPrice: 0, salePrice: 0, stock: 0, minStock: 5 }); setEditingProduct(null); };
   
+  const handleDeleteExpense = (id: string) => {
+    if (confirm("Tem certeza que deseja excluir esta despesa?")) {
+        setExpenses(prev => prev.filter(e => e.id !== id));
+    }
+  };
+
+  const handleDeleteCustomer = (id: string) => {
+    const customer = customers.find(c => c.id === id);
+    if (customer && customer.currentDebt > 0) {
+        alert("Não é possível excluir clientes com dívidas pendentes.");
+        return;
+    }
+    if (confirm(`Tem certeza que deseja excluir o cliente "${customer?.name}"? Esta ação não pode ser desfeita.`)) {
+        setCustomers(prev => prev.filter(c => c.id !== id));
+    }
+  };
+
   const handleFileImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -679,7 +696,7 @@ export default function App() {
     picker.setVisible(true);
   };
 
-  const GoalProgressChart = ({ title, currentValue, goalValue, color, isCurrency = true }) => {
+  const GoalProgressChart = ({ title, currentValue, goalValue, color, isCurrency = true }: { title: string, currentValue: number, goalValue: number, color: string, isCurrency?: boolean }) => {
     const progress = goalValue > 0 ? Math.min(100, (currentValue / goalValue) * 100) : 0;
     const data = [
       {
@@ -702,12 +719,12 @@ export default function App() {
               endAngle={-180}
               barSize={12}
             >
+              {/* FIX: The 'clockWise' prop belongs to RadialBar, not RadialBarChart. */}
               <RadialBar
-                minAngle={15}
                 background={{ fill: isDarkMode ? '#1e293b' : '#f1f5f9' }}
-                clockWise
                 dataKey="value"
                 cornerRadius={6}
+                clockWise
               />
               <text
                 x="50%"
@@ -761,7 +778,6 @@ export default function App() {
           <SidebarItem icon={<Package size={20} />} label="Estoque" active={activeView === 'inventory'} collapsed={isSidebarCollapsed} onClick={() => { setActiveView('inventory'); setIsSidebarOpen(false); }} />
           <SidebarItem icon={<Receipt size={20} />} label="Despesas" active={activeView === 'expenses'} collapsed={isSidebarCollapsed} onClick={() => { setActiveView('expenses'); setIsSidebarOpen(false); }} />
           <SidebarItem icon={<Users size={20} />} label="Clientes/Fiado" active={activeView === 'customers'} collapsed={isSidebarCollapsed} onClick={() => { setActiveView('customers'); setIsSidebarOpen(false); }} />
-          <SidebarItem icon={<TrendingUp size={20} />} label="Relatórios" active={activeView === 'reports'} collapsed={isSidebarCollapsed} onClick={() => { setActiveView('reports'); setIsSidebarOpen(false); }} />
           <SidebarItem icon={<Settings size={20} />} label="Ajustes" active={activeView === 'settings'} collapsed={isSidebarCollapsed} onClick={() => { setActiveView('settings'); setIsSidebarOpen(false); }} />
         </nav>
 
@@ -1227,7 +1243,7 @@ export default function App() {
                         </div>
                         <div className="space-y-2 relative z-10">
                           <div className="h-3 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-                             <div className={`h-full transition-all duration-1000 ${c.currentDebt >= c.creditLimit ? 'bg-rose-500' : 'bg-indigo-600 dark:bg-indigo-500'}`} style={{ width: `${Math.min(100, (c.currentDebt / c.creditLimit) * 100)}%` }} />
+                             <div className={`h-full transition-all duration-1000 ${c.currentDebt >= c.creditLimit ? 'bg-rose-500' : 'bg-indigo-600 dark:bg-indigo-500'}`} style={{ width: `${Math.min(100, (c.currentDebt / (c.creditLimit || 1)) * 100)}%` }} />
                           </div>
                         </div>
                         <div className="pt-6 border-t dark:border-slate-800 flex justify-between items-center relative z-10">
@@ -1235,7 +1251,17 @@ export default function App() {
                             <p className="text-[10px] text-slate-300 dark:text-slate-500 font-black uppercase tracking-widest">Já Pago</p>
                             <p className="text-lg font-black text-indigo-700 dark:text-indigo-400">R$ {c.totalPaid.toFixed(2)}</p>
                           </div>
-                          <button onClick={() => { setSelectedCustomerForPayment(c); setPaymentAmount(c.currentDebt.toString()); setIsPaymentModalOpen(true); }} className="bg-emerald-50 dark:bg-emerald-950/20 text-emerald-600 px-6 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center gap-2 hover:bg-emerald-600 dark:hover:bg-emerald-500 hover:text-white transition-all active:scale-95"><HandCoins size={18}/> RECEBER</button>
+                          <div className="flex items-center gap-2">
+                            <button 
+                                onClick={() => handleDeleteCustomer(c.id)} 
+                                disabled={c.currentDebt > 0}
+                                className="p-4 bg-rose-50 dark:bg-rose-950/20 text-rose-600 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center gap-2 hover:bg-rose-600 dark:hover:bg-rose-500 hover:text-white transition-all active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-rose-50 disabled:hover:text-rose-600"
+                                title={c.currentDebt > 0 ? "Quite a dívida para excluir" : "Excluir Cliente"}
+                              >
+                                <Trash2 size={18}/>
+                              </button>
+                            <button onClick={() => { setSelectedCustomerForPayment(c); setPaymentAmount(c.currentDebt.toString()); setIsPaymentModalOpen(true); }} className="bg-emerald-50 dark:bg-emerald-950/20 text-emerald-600 px-6 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center gap-2 hover:bg-emerald-600 dark:hover:bg-emerald-500 hover:text-white transition-all active:scale-95"><HandCoins size={18}/> RECEBER</button>
+                          </div>
                         </div>
                      </div>
                    ))}
@@ -1304,7 +1330,7 @@ export default function App() {
                                          <button onClick={() => setExpenses(prev => prev.map(e => e.id === exp.id ? {...e, isPaid: !e.isPaid} : e))} className={`p-3 rounded-2xl border-2 transition-all ${exp.isPaid ? 'text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20 border-emerald-100 dark:border-emerald-900/40' : 'text-slate-200 dark:text-slate-700 border-slate-100 dark:border-slate-800 hover:border-indigo-100 hover:text-indigo-400'}`}>
                                             <Check size={20} strokeWidth={3}/>
                                          </button>
-                                         <button onClick={() => setExpenses(prev => prev.filter(e => e.id !== exp.id))} className="p-3 text-slate-200 dark:text-slate-700 hover:text-rose-500 dark:hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/20 rounded-2xl transition-all"><Trash2 size={20}/></button>
+                                         <button onClick={() => handleDeleteExpense(exp.id)} className="p-3 text-slate-200 dark:text-slate-700 hover:text-rose-500 dark:hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/20 rounded-2xl transition-all"><Trash2 size={20}/></button>
                                       </div>
                                    </td>
                                  </tr>
@@ -1312,36 +1338,6 @@ export default function App() {
                              }
                           </tbody>
                         </table>
-                     </div>
-                  </div>
-               </div>
-            )}
-
-            {activeView === 'reports' && (
-               <div className="space-y-10 animate-in fade-in duration-700">
-                  <div className="bg-slate-900 dark:bg-slate-950 p-12 rounded-[56px] text-white shadow-2xl relative overflow-hidden border dark:border-slate-800">
-                     <div className="absolute top-0 right-0 p-12 opacity-5 scale-150 rotate-12"><TrendingUp size={240}/></div>
-                     <h3 className="text-2xl font-black mb-12 tracking-tight flex items-center gap-4">
-                        <div className="w-12 h-12 bg-indigo-600 dark:bg-indigo-700 rounded-2xl flex items-center justify-center"><CheckCircle2 size={24}/></div>
-                        Performance Coruja
-                     </h3>
-                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-12 relative z-10">
-                        <div className="space-y-2">
-                           <p className="text-slate-500 dark:text-slate-400 text-[11px] uppercase font-black tracking-widest">Receita Bruta</p>
-                           <p className="text-4xl font-black tracking-tighter">R$ {totalSales.toFixed(2)}</p>
-                        </div>
-                        <div className="space-y-2">
-                           <p className="text-slate-500 dark:text-slate-400 text-[11px] uppercase font-black tracking-widest">Média Venda</p>
-                           <p className="text-4xl font-black tracking-tighter">R$ {(totalSales / (sales.length || 1)).toFixed(2)}</p>
-                        </div>
-                        <div className="space-y-2">
-                           <p className="text-slate-500 dark:text-slate-400 text-[11px] uppercase font-black tracking-widest">Transações</p>
-                           <p className="text-4xl font-black tracking-tighter text-indigo-400 dark:text-indigo-500">{sales.length}</p>
-                        </div>
-                        <div className="space-y-2">
-                           <p className="text-slate-500 dark:text-slate-400 text-[11px] uppercase font-black tracking-widest">Saldo Fiado</p>
-                           <p className="text-4xl font-black tracking-tighter text-rose-400 dark:text-rose-500">R$ {totalOutstandingDebt.toFixed(2)}</p>
-                        </div>
                      </div>
                   </div>
                </div>

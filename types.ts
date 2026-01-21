@@ -69,7 +69,7 @@ export interface Customer {
   totalPaid: number;
 }
 
-export type View = 'dashboard' | 'pos' | 'inventory' | 'expenses' | 'reports' | 'customers' | 'sales_history' | 'settings';
+export type View = 'dashboard' | 'pos' | 'inventory' | 'expenses' | 'customers' | 'sales_history' | 'settings';
 
 export interface ScannedProduct {
   name: string;
