@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { 
   LayoutDashboard, 
@@ -51,11 +50,12 @@ import {
   Fingerprint,
   Eye,
   EyeOff,
-  ExternalLink
+  ExternalLink,
+  Target
 } from 'lucide-react';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  BarChart, Bar, PieChart, Pie, Cell 
+  BarChart, Bar, PieChart, Pie, Cell, RadialBarChart, RadialBar, Legend
 } from 'recharts';
 
 import { Product, Sale, Expense, View, Category, SaleItem, ScannedProduct, PaymentMethod, ExpenseType, Customer } from './types';
@@ -127,6 +127,8 @@ const STORAGE_KEYS = {
   CUSTOMERS: 'coruja_customers',
   DARK_MODE: 'coruja_dark_mode',
   CLIENT_ID: 'coruja_google_client_id',
+  SALES_GOAL: 'coruja_sales_goal',
+  EXPENSE_GOAL: 'coruja_expense_goal',
 };
 
 // --- Main App Component ---
@@ -236,6 +238,19 @@ export default function App() {
   const [inventorySearch, setInventorySearch] = useState("");
   const [inventoryCategory, setInventoryCategory] = useState<string>("Todas");
 
+  const [salesGoal, setSalesGoal] = useState<number>(() => {
+    const saved = localStorage.getItem(STORAGE_KEYS.SALES_GOAL);
+    return saved ? Number(JSON.parse(saved)) : 10000;
+  });
+
+  const [expenseGoal, setExpenseGoal] = useState<number>(() => {
+    const saved = localStorage.getItem(STORAGE_KEYS.EXPENSE_GOAL);
+    return saved ? Number(JSON.parse(saved)) : 2500;
+  });
+
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.SALES_GOAL, JSON.stringify(salesGoal)); }, [salesGoal]);
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.EXPENSE_GOAL, JSON.stringify(expenseGoal)); }, [expenseGoal]);
+
   // --- Handlers ---
   const handleExportLocalBackup = () => {
     const data = { products, sales, expenses, customers, version: "2.3", exportDate: new Date().toISOString() };
@@ -312,7 +327,7 @@ export default function App() {
   const handleDeleteSale = (id: string) => { if (!confirm("Estornar?")) return; const s = sales.find(sa => sa.id === id); if (s) { setProducts(prev => prev.map(p => { const it = s.items.find(si => si.productId === p.id); return it ? { ...p, stock: p.stock + it.quantity } : p; })); if (s.paymentMethod === PaymentMethod.FIADO && s.customerId) setCustomers(prev => prev.map(cu => cu.id === s.customerId ? { ...cu, currentDebt: Math.max(0, Number((cu.currentDebt - s.total).toFixed(2))) } : cu)); } setSales(prev => prev.filter(sa => sa.id !== id)); };
 
   const capturePOSPhoto = async () => { if (canvasRef.current && videoRef.current) { setPosLoading(true); const ctx = canvasRef.current.getContext('2d'); canvasRef.current.width = videoRef.current.videoWidth; canvasRef.current.height = videoRef.current.videoHeight; ctx?.drawImage(videoRef.current, 0, 0); const base64 = canvasRef.current.toDataURL('image/jpeg').split(',')[1]; try { const product = await identifyProductFromImage(base64, products); if (product) setPendingProduct(product); else alert("Produto não identificado."); } catch (e) { alert("Erro ao identificar."); } finally { setPosLoading(false); } } };
-  const deleteProduct = (id: string) => { if (confirm("Excluir produto?")) setProducts(prev => prev.filter(p => p.id !== id)); };
+  const deleteProduct = (id: string) => { if (confirm("Tem certeza que deseja excluir este produto? Esta ação não pode ser desfeita.")) setProducts(prev => prev.filter(p => p.id !== id)); };
   const handleAddOrUpdateExpense = () => { if (!newExpense.description || !newExpense.amount) return alert("Preencha tudo."); const exp = { id: editingExpenseId || `e${Date.now()}`, date: new Date().toISOString(), dueDate: newExpense.dueDate || new Date().toISOString().split('T')[0], description: newExpense.description, amount: newExpense.amount, type: newExpense.type, isPaid: false }; if (editingExpenseId) setExpenses(prev => prev.map(e => e.id === editingExpenseId ? exp : e)); else setExpenses(prev => [...prev, exp]); setNewExpense({ description: '', amount: 0, dueDate: '', type: ExpenseType.FIXA }); setEditingExpenseId(null); };
   const handleRegisterPayment = () => { if (!selectedCustomerForPayment || !paymentAmount) return; const amount = Number(paymentAmount); setCustomers(prev => prev.map(c => c.id === selectedCustomerForPayment.id ? { ...c, currentDebt: Math.max(0, Number((c.currentDebt - amount).toFixed(2))), totalPaid: Number((c.totalPaid + amount).toFixed(2)) } : c)); setIsPaymentModalOpen(false); setPaymentAmount(""); setSelectedCustomerForPayment(null); };
   const handleSaveProduct = () => { if (!newProduct.name || !newProduct.salePrice) return alert("Preencha nome e preço."); const p = { id: editingProduct?.id || `p${Date.now()}`, ...newProduct, lastUpdated: new Date().toISOString() }; if (editingProduct) setProducts(prev => prev.map(item => item.id === editingProduct.id ? p : item)); else setProducts(prev => [...prev, p]); setIsProductModalOpen(false); setNewProduct({ name: '', category: Category.ALIMENTOS, costPrice: 0, salePrice: 0, stock: 0, minStock: 5 }); setEditingProduct(null); };
@@ -451,6 +466,14 @@ export default function App() {
     const weeklyTotal = sales.filter(s => new Date(s.date) >= startOfWeek).reduce((acc, s) => acc + s.total, 0);
     return { weeklyTotal, monthlyTotal };
   }, [sales]);
+
+  const monthlyExpenses = useMemo(() => {
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    return expenses
+        .filter(e => new Date(e.date) >= startOfMonth)
+        .reduce((acc, e) => acc + e.amount, 0);
+  }, [expenses]);
 
   const chartData = useMemo(() => {
     const dailyData: { [key: string]: number } = {};
@@ -656,6 +679,56 @@ export default function App() {
     picker.setVisible(true);
   };
 
+  const GoalProgressChart = ({ title, currentValue, goalValue, color, isCurrency = true }) => {
+    const progress = goalValue > 0 ? Math.min(100, (currentValue / goalValue) * 100) : 0;
+    const data = [
+      {
+        name: 'Progresso',
+        value: progress,
+        fill: color,
+      },
+    ];
+
+    return (
+      <div className="bg-white dark:bg-slate-900 p-6 rounded-[32px] border border-slate-100 dark:border-slate-800 shadow-sm flex flex-col items-center justify-center h-full">
+        <h4 className="text-[11px] font-black uppercase text-slate-400 dark:text-slate-500 tracking-widest mb-4">{title}</h4>
+        <div style={{ width: '100%', height: 150 }}>
+          <ResponsiveContainer>
+            <RadialBarChart
+              innerRadius="70%"
+              outerRadius="90%"
+              data={data}
+              startAngle={180}
+              endAngle={-180}
+              barSize={12}
+            >
+              <RadialBar
+                minAngle={15}
+                background={{ fill: isDarkMode ? '#1e293b' : '#f1f5f9' }}
+                clockWise
+                dataKey="value"
+                cornerRadius={6}
+              />
+              <text
+                x="50%"
+                y="50%"
+                textAnchor="middle"
+                dominantBaseline="middle"
+                className="text-3xl font-black tracking-tighter"
+                fill={color}
+              >
+                {`${progress.toFixed(0)}%`}
+              </text>
+            </RadialBarChart>
+          </ResponsiveContainer>
+        </div>
+        <p className="text-center text-xs font-bold text-slate-400 dark:text-slate-500 mt-4">
+          {isCurrency ? `R$ ${currentValue.toFixed(2)}` : currentValue} de {isCurrency ? `R$ ${goalValue.toFixed(2)}` : goalValue}
+        </p>
+      </div>
+    );
+  };
+
   return (
     <div className="flex min-h-screen bg-slate-50 dark:bg-slate-950 transition-all duration-500 overflow-x-hidden text-slate-900 dark:text-slate-100">
       {isSidebarOpen && <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-40 lg:hidden" onClick={() => setIsSidebarOpen(false)} />}
@@ -751,13 +824,13 @@ export default function App() {
           {activeView === 'dashboard' && (
             <div className="space-y-6 animate-in fade-in duration-500">
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
-                <StatCard title="Vendas do Mês" value={`R$ ${totalSales.toFixed(2)}`} icon={<TrendingUp size={24} />} trend={`${filteredSales.length} transações`} trendUp={true} />
+                <StatCard title="Vendas do Mês" value={`R$ ${globalStats.monthlyTotal.toFixed(2)}`} icon={<TrendingUp size={24} />} trend={`${filteredSales.length} transações`} trendUp={true} />
                 <StatCard title="Fiados Ativos" value={`R$ ${totalOutstandingDebt.toFixed(2)}`} icon={<Users size={24} />} trend="Pendente" />
                 <StatCard title="Contas a Pagar" value={`R$ ${pendingExpenses.toFixed(2)}`} icon={<Receipt size={24} />} trend="Vencendo" />
                 <StatCard title="Ticket Médio" value={`R$ ${(totalSales / (filteredSales.length || 1)).toFixed(2)}`} icon={<HandCoins size={24} />} trendUp={true} />
               </div>
-              <div className="grid grid-cols-1 gap-8">
-                <div className="bg-white dark:bg-slate-900 p-6 md:p-8 rounded-[32px] border border-slate-100 dark:border-slate-800 shadow-sm h-[400px]">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <div className="lg:col-span-2 bg-white dark:bg-slate-900 p-6 md:p-8 rounded-[32px] border border-slate-100 dark:border-slate-800 shadow-sm h-[400px]">
                    <div className="flex items-center justify-between mb-8">
                       <h3 className="font-black text-slate-800 dark:text-slate-100 text-lg uppercase tracking-tight">Fluxo Diário</h3>
                       <div className="flex items-center space-x-2 text-xs font-bold text-slate-400 dark:text-slate-500">
@@ -783,6 +856,24 @@ export default function App() {
                         <Line type="monotone" dataKey="amount" stroke="#4f46e5" strokeWidth={4} dot={{ r: 6, fill: '#4f46e5', stroke: isDarkMode ? '#0f172a' : '#fff', strokeWidth: 2 }} activeDot={{ r: 8 }} />
                       </LineChart>
                    </ResponsiveContainer>
+                </div>
+                <div className="space-y-8">
+                    <GoalProgressChart 
+                      title="Meta de Vendas"
+                      currentValue={globalStats.monthlyTotal}
+                      goalValue={salesGoal}
+                      color="#4f46e5"
+                    />
+                    <GoalProgressChart
+                      title="Teto de Despesas"
+                      currentValue={monthlyExpenses}
+                      goalValue={expenseGoal}
+                      color={
+                        (monthlyExpenses / expenseGoal) >= 0.9 ? '#ef4444' // red-500
+                        : (monthlyExpenses / expenseGoal) >= 0.75 ? '#f97316' // orange-500
+                        : '#3b82f6' // blue-500
+                      }
+                    />
                 </div>
               </div>
             </div>
@@ -873,6 +964,36 @@ export default function App() {
           {/* SETTINGS */}
           {activeView === 'settings' && (
             <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in duration-500">
+                 <div className="bg-white dark:bg-slate-900 p-10 rounded-[48px] border border-slate-100 dark:border-slate-800 shadow-xl">
+                   <h3 className="text-2xl font-black text-slate-800 dark:text-slate-100 mb-6 flex items-center gap-3"><Target size={24} className="text-indigo-600" /> Metas Mensais</h3>
+                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                       <div className="space-y-2">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Meta de Vendas</label>
+                          <div className="relative">
+                              <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-slate-300 dark:text-slate-500">R$</span>
+                              <input 
+                                type="number" 
+                                value={salesGoal} 
+                                onChange={(e) => setSalesGoal(Number(e.target.value))} 
+                                className="w-full pl-10 pr-4 py-4 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-indigo-600 dark:focus:border-indigo-500 dark:text-slate-100 rounded-2xl font-black outline-none"
+                              />
+                          </div>
+                       </div>
+                       <div className="space-y-2">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Teto de Despesas</label>
+                          <div className="relative">
+                            <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-slate-300 dark:text-slate-500">R$</span>
+                            <input 
+                                type="number" 
+                                value={expenseGoal} 
+                                onChange={(e) => setExpenseGoal(Number(e.target.value))} 
+                                className="w-full pl-10 pr-4 py-4 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-indigo-600 dark:focus:border-indigo-500 dark:text-slate-100 rounded-2xl font-black outline-none"
+                              />
+                          </div>
+                       </div>
+                   </div>
+                </div>
+
                 <div className="bg-white dark:bg-slate-900 p-10 rounded-[48px] border border-slate-100 dark:border-slate-800 shadow-xl overflow-hidden relative group">
                     <div className="absolute top-0 right-0 p-10 opacity-5 group-hover:scale-110 transition-transform"><Cloud size={160} className="dark:text-slate-400" /></div>
                     <div className="relative z-10">
