@@ -1,3 +1,4 @@
+
 export enum Category {
   BEBIDAS = 'Bebidas',
   ALIMENTOS = 'Alimentos',
@@ -68,7 +69,7 @@ export interface Customer {
   totalPaid: number;
 }
 
-export type View = 'dashboard' | 'pos' | 'inventory' | 'expenses' | 'customers' | 'settings';
+export type View = 'dashboard' | 'pos' | 'inventory' | 'expenses' | 'reports' | 'customers' | 'sales_history' | 'settings';
 
 export interface ScannedProduct {
   name: string;
